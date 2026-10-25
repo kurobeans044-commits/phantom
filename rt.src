@@ -1,0 +1,364 @@
+MarkovGenerate = function(orderArg, minLenArg, maxLenArg)
+    order     = 3   // 5hell uses order-3 chains
+    minLength = 5
+    maxLength = 12  // safety cap only — generation length is bounded by each seed's OWN length (5hell-style)
+    if typeof(orderArg)  == "number" then order     = orderArg
+    if typeof(minLenArg) == "number" then minLength = minLenArg
+    if typeof(maxLenArg) == "number" then maxLength = maxLenArg
+
+    // multiple themed sample lists for more variety
+    tables = {}
+
+	tables["rockyou"] = "password,123456,12345678,1234,qwerty,12345,dragon,baseball,football,letmein,monkey,696969,abc123,mustang,michael,shadow,master,jennifer,111111,2000,jordan,superman,harley,1234567,hunter,trustno1,ranger,buster,thomas,tigger,robert,soccer,batman,test,pass,hockey,george,charlie,andrew,michelle,love,sunshine,jessica,6969,pepper,daniel,access,123456789,654321,joshua,maggie,starwars,silver,william,dallas,yankees,123123,ashley,666666,hello,amanda,orange,biteme,freedom,computer,sexy,thunder,nicole,ginger,heather,hammer,summer,corvette,taylor,austin,1111,merlin,matthew,121212,golfer,cheese,princess,martin,chelsea,patrick,richard,diamond,yellow,bigdog,secret,asdfgh,sparky,cowboy,camaro,anthony,matrix,falcon,iloveyou,bailey,guitar,jackson,purple,scooter,phoenix,aaaaaa,morgan,tigers,porsche,mickey,maverick,cookie,nascar,peanut,justin,131313,money,horny,samantha,panties,steelers,joseph,snoopy,boomer,whatever,iceman,smokey,gateway,dakota,cowboys,eagles,chicken,black,zxcvbn,please,andrea,ferrari,knight,hardcore,melissa,compaq,coffee,booboo,johnny,bulldog,xxxxxx,welcome,james,player,ncc1701,wizard,scooby,charles,junior,internet,mike,brandy,tennis,banana,monster,spider,lakers,miller,rabbit,enter,mercedes,brandon,steven,fender,john,yamaha,diablo,chris,boston,tiger,marine,chicago,rangers,gandalf,winter,bigtits,barney,edward,raiders,porn,badboy,blowme,spanky,bigdaddy,johnson,chester,london,midnight,blue,fishing,000000,hannah,slayer,11111111,rachel,sexsex,redsox,thx1138,asdf,marlboro,panther,zxcvbnm,arsenal,oliver,qazwsx,mother,victoria,7777777,jasper,angel,david,winner,crystal,golden,butthead,viking,jack,iwantu,shannon,murphy,angels,prince,cameron,girls,madison,wilson,carlos,hooters,willie,startrek,captain,maddog,jasmine,butter,booger,angela,golf,lauren,rocket,tiffany,theman,dennis,liverpoo,flower,forever,green,jackie,muffin,turtle,sophie,danielle,redskins,toyota,jason,sierra,winston,debbie,giants,packers,newyork,jeremy,casper,bubba,112233,sandra,lovers,mountain,united,cooper,driver,tucker,helpme,pookie,lucky,maxwell,8675309,bear,suckit,gators,5150,222222,shithead,jaguar,monica,fred,happy,hotdog,tits,gemini,lover,xxxxxxxx,777777,canada,nathan,victor,florida,88888888,nicholas,rosebud,metallic,doctor,trouble,success,stupid,tomcat,warrior,peaches,apples,fish,qwertyui,magic,buddy,dolphins,rainbow,gunner,987654,freddy,alexis,braves,2112,1212,xavier,dolphin,testing,bond007,member,calvin,voodoo,7777,samson,alex,apollo,fire,tester,walter,beavis,voyager,peter,porno,bonnie,rush2112,beer,apple,scorpio,jonathan,skippy,sydney,scott,red123,power,gordon,travis,beaver,star,flyers,232323,zzzzzz,steve,rebecca,scorpion,doggie,legend,ou812,yankee,blazer,bill,runner,birdie,555555,parker,topgun,asdfasdf,heaven,viper,animal,2222,bigboy,4444,arthur,baby,private,godzilla,donald,williams,lifehack,phantom,dave,rock,august,sammy,cool,brian,platinum,jake,bronco,paul,mark,frank,heka6w2,copper,billy,garfield,willow,cunt,little,carter,slut,albert,69696969,kitten,super,jordan23,eagle1,shelby,america,11111,jessie,house,free,123321,chevy,bullshit,white,broncos,horney,surfer,nissan,999999,saturn,airborne,elephant,marvin,shit,action,adidas,qwert,kevin,1313,explorer,walker,police,christin,december,benjamin,wolf,sweet,therock,king,online,brooklyn,teresa,cricket,sharon,dexter,racing,penis,gregory,0000,teens,redwings,dreams,michigan,hentai,magnum,87654321,nothing,donkey,trinity,digital,333333,stella,cartman,guinness,123abc,speedy,buffalo,kitty,pimpin,eagle,einstein,kelly,nelson,nirvana,vampire,xxxx,playboy,louise,pumpkin,snowball,test123,girl,sucker,mexico,beatles,fantasy,ford,gibson,celtic,marcus,cherry,cassie,888888,natasha,sniper,chance,genesis,hotrod,reddog,alexande,college,jester,passw0rd,smith,lasvegas,carmen,slipknot,3333,death,kimberly,1q2w3e,eclipse,1q2w3e4r,stanley,samuel,drummer,homer,montana,music,aaaa,spencer,jimmy,carolina,colorado,creative,hello1,rocky,goober,friday,bollocks,scotty,abcdef,bubbles,hawaii,fluffy,mine,stephen,horses,thumper,5555,darkness,asdfghjk,pamela,boobies,buddha,vanessa,sandman,naughty,douglas,honda,matt,azerty,6666,shorty,money1,beach,loveme,4321,simple,poohbear,444444,badass,destiny,sarah,denise,vikings,lizard,melanie,assman,sabrina,nintendo,water,good,howard,time,123qwe,november,xxxxx,october,leather,bastard,young,101010,extreme,hard,password1,vincent,lacrosse,hotmail,spooky,amateur,alaska,badger,paradise,maryjane,poop,crazy,mozart,video,russell,vagina,spitfire,anderson,norman,eric,cherokee,cougar,barbara,long,420420,family,horse,enigma,allison,raider,brazil,blonde,jones,55555,dude,drowssap,jeff,school,marshall,lovely,1qaz2wsx,jeffrey,caroline,franklin,booty,molly,snickers,leslie,nipples,courtney,diesel,rocks,eminem,westside,suzuki,daddy,passion,hummer,ladies,zachary,frankie,elvis,reggie,alpha,suckme,simpson,patricia,147147,pirate,tommy,semperfi,jupiter,redrum,freeuser,wanker,stinky,ducati,paris,natalie,babygirl,bishop,windows,spirit,pantera,monday,patches,brutus,houston,smooth,penguin,marley,forest,cream,212121,flash,maximus,nipple,bobby,bradley,vision,pokemon,champion,fireman,indian,softball,picard,system,clinton,cobra,enjoy,lucky1,claire,claudia,boogie,timothy,marines,security,dirty,admin,wildcats,pimp,dancer,hardon,veronica,abcd1234,abcdefg,ironman,wolverin,remember,great,freepass,bigred,squirt,justice,francis,hobbes,kermit,pearljam,mercury,domino,9999,denver,brooke,rascal,hitman,mistress,simon,tony,bbbbbb,friend,peekaboo,naked,budlight,electric,sluts,stargate,saints,bondage,brittany,bigman,zombie,swimming,duke,qwerty1,babes,scotland,disney,rooster,brenda,mookie,swordfis,candy,duncan,olivia,hunting,blink182,alicia,8888,samsung,bubba1,whore,virginia,general,passport,aaaaaaaa,erotic,liberty,arizona,jesus,abcd,newport,skipper,rolltide,balls,happy1,galore,christ,weasel,242424,wombat,digger,classic,bulldogs,poopoo,accord,popcorn,turkey,jenny,amber,bunny,mouse,007007,titanic,liverpool,dreamer,everton,friends,chevelle,carrie,gabriel,psycho,nemesis,burton,pontiac,connor,eatme,lickme,roland,mitchell,ireland,lincoln,arnold,spiderma,patriots,goblue,devils,eugene,empire,asdfg,cardinal,brown,shaggy,froggy,qwer,kawasaki,kodiak,people,phpbb,light,54321,kramer,chopper,hooker,honey,whynot,lisa,baxter,adam,snake,ncc1701d,qqqqqq,airplane,britney,avalon,sandy,sugar,sublime,stewart,wildcat,raven,scarface,elizabet,123654,trucks,wolfpack,lawrence,raymond,american,alyssa,bambam,movie,woody,shaved,snowman,tiger1,chicks,raptor,1969,stingray,shooter,france,stars,madmax,kristen,sports,jerry,789456,garcia,simpsons,lights,ryan,looking,chronic,alison,hahaha,packard,hendrix,perfect,service,spring,srinivas,spike,katie,252525,oscar,brother,bigmac,suck,single,cannon,georgia,popeye,tattoo,texas,party,bullet,taurus,sailor,wolves,panthers,japan,strike,flowers,pussycat,chris1,loverboy,berlin,sticky,marina,tarheels,fisher,russia,connie,wolfgang,testtest,mature,bass,catch22,juice,michael1,159753,women,alpha1,trooper,hawkeye,head,freaky,dodgers,pakistan,machine,pyramid,vegeta,katana,moose,tinker,coyote,infinity,inside,letmein1,bang,control,hercules,morris,james1,tickle,outlaw,browns,billybob,pickle,test1,michele,antonio,sucks,pavilion,changeme,caesar,prelude,tanner,adrian,darkside,bowling,wutang,sunset,robbie,alabama,danger,zeppelin,juan,rusty,pppppp,nick,2001,ping,darkstar,madonna,qwe123,bigone,casino,cheryl,charlie1,mmmmmm,integra,wrangler,apache,tweety,qwerty12,bobafett,simone,none,business,sterling,trevor,transam,dustin,harvey,england,2323,seattle,ssssss,rose,harry,openup,pandora,trucker,wallace,indigo,storm,malibu,weed,review,babydoll,doggy,dilbert,pegasus,joker,catfish,flipper,valerie,herman,detroit,kenneth,cheyenne,bruins,stacey,smoke,joey,seven,marino,fetish,xfiles,wonder,stinger,pizza,babe,pretty,stealth,manutd,gracie,gundam,cessna,longhorn,presario,mnbvcxz,wicked,mustang1,victory,21122112,shelly,awesome,athena,q1w2e3r4,help,holiday,knicks,street,redneck,12341234,casey,gizmo,scully,dragon1,devildog,triumph,eddie,bluebird,shotgun,peewee,ronnie,angel1,daisy,special,metallica,madman,country,impala,lennon,roscoe,omega,access14,enterpri,miranda,search,smitty,blizzard,unicorn,tight,rick,ronald,asdf1234,harrison,trigger,truck,danny,home,winnie,beauty,thailand,1234567890,cadillac,castle,tyler,bobcat,buddy1,sunny,stones,asian,freddie,chuck,butt,loveyou,norton,hellfire,indiana,short,panzer,lonewolf,colors,blaster,12121212,fireball,logan,precious,aaron,elaine,jungle,atlanta,gold,corona,curtis,nikki,polaris,timber,theone,baller,chipper,orlando,island,skyline,dragons,dogs,benson,licker,goldie,engineer,kong,pencil,basketba,open,hornet,world,linda,barbie,chan,farmer,valentin,indians,larry,redman,foobar,travel,morpheus,bernie,target,141414,hotstuff,photos,laura,savage,holly,rocky1,dollar,turbo,design,newton,hottie,moon,202020,blondes,4128,lestat,avatar,future,goforit,random,abgrtyu,jjjjjj,q1w2e3,smiley,goldberg,express,zipper,wrinkle1,stone,andy,babylon,dong,powers,consumer,dudley,monkey1,serenity,samurai,99999999,skeeter,lindsay,joejoe,master1,aaaaa,chocolat,christia,birthday,stephani,tang,1234qwer,alfred,ball,98765432,maria,sexual,maxima,77777777,sampson,buckeye,highland,kristin,seminole,reaper,bassman,nugget,lucifer,airforce,nasty,watson,warlock,2121,philip,always,dodge,chrissy,burger,bird,snatch,missy,pink,gang,maddie,holmes,huskers,piglet,photo,joanne,hamilton,dodger,paladin,christy,chubby,buckeyes,hamlet,abcdefgh,bigfoot,sunday,manson,goldfish,garden,deftones,icecream,blondie,spartan,julie,harold,charger,brandi,stormy,sherry,pleasure,juventus,rodney,galaxy,holland,escort,zxcvb,planet,jerome,wesley,blues,song,peace,david1,ncc1701e,1966,51505150,cavalier,gambit,karen,sidney,ripper,oicu812,jamie,sister,marie,martha,nylons,aardvark,nadine,minnie,whiskey,bing,plastic,anal,babylon5,chang,savannah,loser,racecar,insane,yankees1,mememe,hansolo,chiefs,fredfred,freak,frog,salmon,concrete,yvonne,zxcv,shamrock,atlantis,warren,wordpass,julian,mariah,rommel,1010,harris,predator,sylvia,massive,cats,sammy1,mister,stud,marathon,rubber,ding,trunks,desire,montreal,justme,faster,kathleen,irish,1999,bertha,jessica1,alpine,sammie,diamonds,tristan,00000,swinger,shan,stallion,pitbull,letmein2,roberto,ready,april,palmer,ming,shadow1,audrey,chong,clitoris,wang,shirley,jackoff,bluesky,sundance,renegade,hollywoo,151515,bernard,wolfman,soldier,picture,pierre,ling,goddess,manager,nikita,sweety,titans,hang,fang,ficken,niners,bottom,bubble,hello123,ibanez,webster,sweetpea,stocking,323232,tornado,lindsey,content,bruce,buck,aragorn,griffin,chen,campbell,trojan,christop,newman,wayne,tina,rockstar,father,geronimo,pascal,crimson,brooks,hector,penny,anna,camera,chandler,fatcat,lovelove,cody,cunts,waters,stimpy,finger,cindy,wheels,viper1,latin,robin,greenday,987654321,creampie,brendan,hiphop,willy,snapper,funtime,duck,trombone,adult,cotton,cookies,kaiser,mulder,westham,latino,jeep,ravens,aurora,drizzt,madness,energy,kinky,314159,sophia,stefan,slick,rocker,55555555,freeman,french,mongoose,speed,dddddd,hong,henry,hungry,yang,catdog,cheng,ghost,gogogo,randy,tottenha,curious,butterfl,mission,january,singer,sherman,shark,techno,lancer,lalala,autumn,chichi,orion,trixie,clifford,delta,bobbob,bomber,holden,kang,kiss,1968,spunky,liquid,mary,beagle,granny,network,bond,kkkkkk,millie,1973,biggie,beetle,teacher,susan,toronto,anakin,genius,dream,dang,bush"
+	// pregens table for MarkovGenerate.
+
+	tables["pregens"] = "Brance,oldfis,001,Ackarde,Kle1,Niferry,holltide,Spril,gon1,309,Iphots,davi,Amrocky1,Treeus,shitmans,Shavell,Mook,ombatman,Ichampio,2312,Dollywo,Dodge,allacey,321,666,duca,horney1,Partis,Greem,verontro,nineer,gunday,oney1,yloritty,Ulie1,sthandy,Buffy,vateur,sney1,Maddy1,Igfoobi,almone,212,Chael1,ibanak,1111,wsx,31234,west12,hammel,andy,Lauro,poopen,0000,Ricanan,Gels,aliberly,Tephenry,Kemongo,ballacey,Eonesi,Ottest,Eattheo,Berty12,Fehackso,yoter1,xicorv,Godzilly,Aylong,eddy1,Astiny,5555555,Gateur,567894567,dogg,catcat,gitarge,Xcv,butthema,hamile,Romber,00700,Ontroub,Oper1,Bigredr,emes1,Kiesell,kenniss,Davell,Tino,Teressi,121,Caspee,Wizabe,kinglane,Issande,Gand,02020,sminit,berty12,Wello12,555,Snicar,tottoney,landiak,joy,973,istingem,Dan2,5555,Brence,1w2e3r4,harky,Lie1,9696969,Elvis,mini,Oney1,2e3r4,siverp,ney1,huntis,ger1,Onteral,000,Hippy1,1122112,Davi,969,Neth,Galori,Usicanno,Realt,Amillar,888,Ussion,Ubba1,222,arney1,erty12,dona,abcdefto,bert,9999999,shleen,Erlint,bastall,gle1,Tricke,2345678,wondia,iper1,pike,nesis,alorev,Newtonio,jokey,Pion,Marizona,ciferre,buckita,15051,13131,Genega,garfac,gry,2112233,q2w3e,willar,Drew,Chiche,Pool,Ephanny,asters,44444,Ames1,Matu,overoke,tardiese,york,Ingracey,Wrinia,Wer,paq,wank,Ucky1,castin,nooper,41414,Oteren,Ess14,obbern,Teendow1,catc,anger1,Ed1234,tendri,Insidni,966,Ples,W3e4r,dcatson,99999,annah,7777777,1212121,Fee,777777,revili,Odoo,77777,Aglesl,omcatc,igerso,5051515,111,22222,guaryj,Yank,Ristatt,loradl,efanth,128,Mattle,Mily,Collybob,Scholm,Krisons,Joanno,Cadiday,20420,88888,iserem,Cd1231,tewayne,12121,Orriso,amsungr,wantom,icial,007007,delti,Phenguin,Warsen,Ockins,ush21122,Inkle1,pokerso,Addy1,010,dina,opleat,disney1,Sakink18,Busi,Ylonde,indiggi,luffin,aylong,21212,hesteve,Omassw,mitch22,birt,ond0070,Vikinge,Ammy1,exterpo,Snickl,Hris1,lorses,777,cagon1,Ompalmon,55555,trunne,wutann,appy1,achers,ylonde,risterli,kris1,englesth,Coln,Trombe,Londer,U812,41415,Osephan,Foriotst,Onicarfi,lincolor,Gle1,staller,atarhe,Tornar,Oberne,12233,empineer,Partremy,Endorad,yan,katies,Spunks,lion,onmantu,Arristri,uiserv,urussi,heka6w2,Asian,Kathom,123abc1,Mein1,mastles,Onatan,Wheele,olandy,mokeye,nugger,Sporna,Ky1,arthunt,Ricagon,newpors,arknesig,Heronn,Frey,midney1,Uturbo,esteal,Glerie,Dani,adonal,gand,assw0rd,hleenday,Tasy,Kitali,cd12345,nius,fectobe,Arvinc,Sinesi,ylorses,morgia,42424,Pine,naughts,2211221,apoliv,Pence,spril,Cer,Atherot,powert,Captori,Agle1,rlindonk,Ou812,Etmein2,3456789,candre,freamer,albern,Thange,23232,Hollyb,1701d,54321,insidni,wateve,Dianthe,Eftonewp,auraid,Amontai,londor,rush21,we1,ablowe,Swimmy1,bearcuri,Hael1,Fantegr,reddy1,07007,litter,4321,obraz,orney1,Mini,Denigh,Phia,gendall,hendona,Flass,tigero,Odzillyb,Xcvb,Mulden,23321,Itney1,34qwer,32323,33333,Horsc,mari,Athami,zombam,Eamsunda,klinker,ways,Culest,12345,ucativ,Bonnort,Ush21122,ennorm,sparis,Baragon,mandam,Melants,Ungrac,Racharg,tumn,nlinge,Hawasak,Sainer,Toris1,serencis,Patrinol,fasdfghj,erlie1,dney1,dager,Bana,Luffin,Hunties,risteend,Parat,Casian,Indow1,Sirelu,ello12,my1,aesara,verokemo,skeyes,Beet,dy1,47147,Rocky1,1234567,Ello1234,password1,pontry,Wank,utus,Fasty,Honde,69696,char,34567,Brutur,securt,Sammy1,Cc1701,tmandm,Willas,erothy,webstef,Hollti,bigfooby,Nesireb,key1,Parter,tockstar,Carthang,444,estteres,Siana,Happe,234567,Taylon,Masswo,edmans,Zerty1,dassw0,Henda,Eter1,olicardi,Ogie,Ondong,Cxz,Utterson,Ittani,97530,emesisty,York,Uggeta,mes1,41597,Indy,Evilip,Freddo,shin,letmein2,Roradi,Locky1,Ricky1,8888888,lintoni,Achiefs,Ecliffo,sinesist,Cher,Tommy1,Appy1,hingemi,3321,per1,333,emanad,Semperma,7654321,Itarde,31313,Assica1,arcurt,Stinge,45678,Houstme,ervince,massia,Itarwa,Ocolorev,0rd,Gerother,Mesign,Gry,ingerom,tein2,atrinal,Rascar,press1,654321,151,Froggi,25252,ouiser,00000,Ficket,Guaryj,Ephenda,suckeye,fmanso,Arrenix,Ty12,einsterf,atthers,Roggie,acherce,melane,andorad,Dessio,otickm,rarine,kemonke,Istarhee,Laxy,3abcd,Fgang1,Immy1,Ringel1,alwayn,Zepper1,bobbit,natheng,0515051,changer1,ollo1,Testewa,dingry,Kennor,frey,Howars,14714,celtid,edney1,ford1,Auraid,Ubby,Forevier,ressive,machelp,nico,aladisn,oter1,loverth,ewyork,katink,eamelan,Riness14,schopp,vikitt,ternadon,75309,Thanimo,enverp,Stalibe,Zombit,Oyoter,Elisa,eavers,axwella,ampireb,yank,Atchel,ogie,Ophine,Ittest,koffee,atorny,Connif,dextre,Willanto,tommy1,anak,Dirth,Unnerg,busica,11111,c1234,Eamesi,golf,urench,Scholi,Ikinger,Jeffren,894567894,chest1,Skippl,Ericial,Atanger,Eminer,eaper1,erpoopen,Pamerc,Tiverona,spunks,terpooky,Angel1,ghorney1,Goosere,dvarky,Ney1,digon1,atch22,orris1,ucky1,Dianal,ilorad,otstuffa,4qwerty,Wlinky,scarta,Lshitem,ousti,Rooking,Haterlie,zillica,eavelo,vannone,Ockenn,otromm,Cinda,Chrish,Iger1,Imalic,ondesth,lon5,Olphine,Larry,barater,igtitar,Anglandr,999,chronal,Beaves,otrook,Chighl,Ter1,icturt,Kennone,James1,Mailori,Titanan,lo123,Sculls,Ipplest,phie,Sherom,Koffee,Tlandman,denny,Carden,iquirt,Ebstere,Minerg,Uttere,Gianan,968,Wellywo,farmen,overso,ishels,Goodoo,xcv,link,Sammero,Yan,Rizonat,licecreal,itmans,Iquirt,sexs,Willywoo,Enguinsi,dassiv,wutanl,nager1,96969,maggy,concoln,jordon,toberna,stinkees,klincent,Undani,eryl,kme,Scookie,sprini,Aisere,Igtits,Fishercu,elconcr,tickme,wantin,Tiger1,Quirty,Freety,Uturen,usterso,ardenix,attheon,Popcor,harrio,Mokers,Num,kevie,honde,Olpha1,treeuser,Ervince,noness,dmantu,Spirebec,nadass,Liquir,894567890,Assicar,kle1,sherom,redwar,amandy,eyoungle,oldierre,countie,Inniss,tonewto,lauro,racey,Sierry,Packoffe,Liso,Ruturt,fathea,Racey,alphan,iltoness,Rlesth,intoney1,alcomp,Argeron,Scardv,Sicandma,Undann,Arshaggi,Xicolo,stang1,Ambite,tann,Qaz2wsx,sparks,12341,smingr,Gandage,Ollack,gineme,bust,Icu812,oyoter,ramilt,6969696,Untas,natcatch,hella,Stterend,remes1,Ackey1,drey,ghors,Bootbal,nesistem,1111111,rustno1,Thailora,Arshanso,01e,Griffor,Cati,Erty12,ferry,adiness,igitarh,zachent,Abc1,Idasspo,51515,ylinday,shool,liss,Ephengu,fasdfgh,Cames1,sper1,Systal,Aryjanez,Leathong,occess,313,Helb,Richando,Travie,Srinerso,Adgers,Ibanak,Murphen,Athang,345678,Ovello,weet,Lackerm,Iwanky,3abc12,65432,cer,Inter1,Amidne,gade,bearch,oris1,st12345,Holltide,qwerty1,linky,wimminge,cc1701e,Marl,Bastinal,sammy1,3e4r,ondanim,Chael,curior,weetlesl,112,itney1,23654321,Onsteway,preddi,ocky1,Ectory,comega,chev,Ink18,ba1,kramie,Jenneral,Argandy,Ballie1,Kins,Roldenve,Hobbit,boobarb,Ickle1,Garfacec,Cil,gianth,budley,Sycats,onmanak,ballison,Uitarw,artish,ystars,Dogg,erlindam,Riello1,beet,funtry,nadow1,Scoopo,berty1,tiderson,Carlocks,Wolv,igle1,Agon1,bafetten,Simoney1,Montre,marl,Aturtl,grankl,2211223,87654,Captorn,Gendonk,Eonewt,o1236543,rander,nascal,ackenni,Noney1,ounties,camants,indy,icu812,Afettent,Ombonder,Uddy1,eminni,Usterf,Pbellet,ty12,babet,tney1,1505151,Roublim,trolive,snaking,toriana,Ainbow,cc1701d,Tion,canal,nah,2121212,Chica1,gelsea,Alorev,Noney,Lo1234qw,ascarm,everich,66666,pearley,ickers,150,claireb,3qwe1,drealt,Sailov,tyui,pbb,savalo,mexis,c1701d,Ristimo,lickey,uggeta,Rlest1,stocksta,Rooservi,guinni,Roit,Oky,Simpy,Avalond0,Wolverso,1w2e3,Micharri,Izardenv,Tere,wanger,syster,Handager,Eachica,lo123qwe,test1,Tang1,Ironald,estefant,Systan,Blower,Esistee,Katardco,Islayb,Enness,23456,mulden,Harv,Tureni,luckerm,istonio,ninterni,Ristee,iousting,erney1,Kitar,filey,freddo,Caronn,Igitarg,Orishit,dine,Ommeri,gel1,Parte,lie1,ontonewm,nessians,glandal,Onathong,Wsx,Ainess,renday,arwarlos,stsidney,Mansan,Ord1,elseatt,gunny,awester,Toney1,Millyw,ossello1,Pirist,Ozardc,Shelle,whees1,illace,datorman,Want,lo123456,Cortyu,istreatm,set,asdfghjk,ibanes,Amiley,Hollo12,Homa,owlines,ltideo,Oblues,busi,Freniser,obafet,warden,homast,basella,cc1701,istange,poperm,Culestim,lazert,Misteac,67890,Eryl,Endrizz,Birt,ulier,itanal,Tingle1,Bubbe,Otheave,Gustar,Ollo1234,Funts,aladies,ildcatso,erokem,Slie1,Smanta,Sinold,Oger1,Bubba1,Lion,u812,passmanu,griffor,Esisty,Vikink1,Curitta,01010,Uturn,accorp,emandr,Ricarte,Cannah,stormana,radow1,joej,42042,accoront,Anak,Iffantha,rocken,Rlie1,werty12,toberth,Donn,foothi,Uirty1,cavalenn,socces,grty12,Lorschon,earcus,Obbite,tartyui,winten,Lacki,Gemes,Wimmy1,grtyui,Frandl,kees1,mokers,Obings,treedom,romberty,Skings,Disney1,line,inger1,eness1,Action,E12332,76543,Enjamilt,231234567,asdf1,starwarr,sierry,oloradle,Comeri,agord1,ilorevor,ucatin,ashanie,8765432,nicherry,Rariah,mrocky1,Nemes1,Vateur,hris1,snakis,Rarinit,rinerso,etroopy,Gel1,St12345,Lairem,onica1,lookies,456789,Atcatd,itherome,Ang1,Yler,canaki,ancentus,anicorv,junick,Stein2,Ockitty,Pme,Bottie,Antheryl,Catinald,mein2,iterso,shelle,Texan,fetten,no1,dolpha1,Orty12,Torittl,kardva,compala,Ivatashl,Olasta,Driah,Tans,Scarta,skippl,ticky1,Immie,redmaxim,Ness1,Edwars,gatern,dennon,arshang,undann,Lorschen,Sychocol,cooky,iloria,Iley,ichael1,windon,hley,Aragon1,Phendam,Rubba1,lission"
+
+   
+    // build combined sample list from all tables
+    allSamples = []
+    for tableKey in tables.indexes
+        for pw in tables[tableKey].split(",")
+            if pw.len > order then allSamples.push(pw)
+        end for
+    end for
+	gco.seedWords = allSamples   // raw dictionary words, pre-branching — for ar's dictionary attack
+    // build markov chains from all samples
+    chains = {}
+    for sample in allSamples
+        for i in range(0, sample.len - order - 1)
+            key = sample[i : i + order]
+            if not chains.hasIndex(key) then chains[key] = []
+            nextChar = sample[i + order]
+            if chains[key].indexOf(nextChar) == null then chains[key].push(nextChar)
+        end for
+    end for
+
+    // collect start configs — use maxLength as ceiling instead of seed length
+    configMap = {}
+    for sample in allSamples
+        for startPos in range(0, sample.len - order)
+            key = sample[startPos : startPos + order]
+            // 5hell-style: grow only up to the seed's OWN length (capped by maxLength for safety)
+            targetLen = sample.len
+            if targetLen > maxLength then targetLen = maxLength
+            configKey = key + "|" + targetLen
+            if not configMap.hasIndex(configKey) then
+                configMap[configKey] = [key, targetLen]
+            end if
+        end for
+    end for
+
+    passwordSet = {}
+
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    cleanPw = function(pw)
+        for i in range(0, pw.len - 1)
+            if allowed.indexOf(pw[i]) == null then return ""
+        end for
+        return pw
+    end function
+
+    // capitalize first letter
+    Cap = function(s)
+        if s.len == 0 then return s
+        return s[:1].upper + s[1:]
+    end function
+
+    // 5hell's leading consonant-cluster strip: if the first two letters
+    // form an unpronounceable cluster, drop the first letter so the word
+    // looks like a game-generated password (e.g. Bverontro -> Verontro)
+    Reshape = function(s)
+        if s.len < 2 then return s
+        a = s[0]
+        b = s[1]
+        if a.lower == b or ("hrl'aeiou".indexOf(b) == null and "AEIOUS".indexOf(a) == null and (a + b) != "Ch" and (a + b) != "Mc") then
+            rest = s[1:]
+            if rest.len == 0 then return rest
+            return rest[:1].upper + rest[1:]
+        end if
+        return s
+    end function
+
+    // seed with all originals
+    for tableKey in tables.indexes
+        for pw in tables[tableKey].split(",")
+            pl = cleanPw(pw.lower)
+            if pl != "" then
+                passwordSet[pl] = 1
+                if pl.len > 0 then passwordSet[pl[:1].upper + pl[1:]] = 1
+            end if
+        end for
+    end for
+
+    // iterative markov branching
+    totalConfigs = configMap.indexes.len
+    configsDone  = 0
+    lastReport   = 0
+    print(c.grey + "  walking " + totalConfigs + " chain configs  (order=" + order + " min=" + minLength + " max=" + maxLength + ")..." + c.ennd)
+    for configKey in configMap.indexes
+        config = configMap[configKey]
+        startKey = config[0]
+        targetLen = config[1]
+        if targetLen < minLength then continue
+        stack = [[startKey, targetLen]]
+        while stack.len > 0
+            item = stack.pop
+            current = item[0]
+            target = item[1]
+            if current.len >= target then
+                fp = cleanPw(current.lower)
+                while fp.len > 0 and (fp[0] == "-")
+                    fp = fp[1:]
+                end while
+                while fp.len > 0 and (fp[-1] == "-")
+                    fp = fp[:-1]
+                end while
+                if fp.len >= minLength then
+                    passwordSet[fp] = 1
+                    if fp.len > 0 then passwordSet[fp[:1].upper + fp[1:]] = 1
+                end if
+                continue
+            end if
+            token = current[current.len - order:]
+            if not chains.hasIndex(token) then
+                fp = cleanPw(current.lower)
+                if fp.len >= minLength then
+                    passwordSet[fp] = 1
+                    if fp.len > 0 then passwordSet[fp[:1].upper + fp[1:]] = 1
+                end if
+                continue
+            end if
+            if current.len >= minLength then
+                fp = cleanPw(current.lower)
+                if fp != "" then
+                    passwordSet[fp] = 1
+                    if fp.len > 0 then passwordSet[fp[:1].upper + fp[1:]] = 1
+                end if
+            end if
+            for nextChar in chains[token]
+                stack.push([current + nextChar, target])
+            end for
+        end while
+        configsDone = configsDone + 1
+        pct = floor(configsDone / totalConfigs * 100)
+        if pct >= lastReport + 10 then
+            lastReport = pct
+            print(c.grey + "  " + pct + "%  " + passwordSet.len + " passwords so far..." + c.ennd)
+        end if
+    end for
+
+    // 5hell-style post-process: add the consonant-strip reshaped form of
+    // every word, plus 3/4-char prefix/suffix fragments — the game's real
+    // passwords are largely these short truncations, so without them the
+    // table never matches them (this is the key difference from before)
+    baseWords = passwordSet.indexes
+    for w in baseWords
+        if w.len < 2 then continue
+        rs = Reshape(Cap(w))
+        if rs != "" then
+            passwordSet[rs] = 1
+            passwordSet[rs.lower] = 1
+        end if
+        if w.len > 3 then
+            f4 = w[:4]
+            f3 = w[:3]
+            passwordSet[f4] = 1
+            passwordSet[Cap(f4)] = 1
+            passwordSet[f3] = 1
+            passwordSet[Cap(f3)] = 1
+        end if
+        if w.len > 4 then
+            b3 = w[-3:]
+            b4 = w[-4:]
+            passwordSet[b3] = 1
+            passwordSet[Cap(b3)] = 1
+            passwordSet[b4] = 1
+            passwordSet[Cap(b4)] = 1
+        end if
+    end for
+
+    return passwordSet.indexes
+end function
+CommandTable["mark"] = @MarkovGenerate
+// -- Rainbow Table ------------------------------------------------
+buildRainbowTable = function(orderArg, minLenArg, maxLenArg)
+    gco.rt = {}
+    print(c.green + "Generating passwords via Markov chain..." + c.ennd)
+    passwords = MarkovGenerate(orderArg, minLenArg, maxLenArg)
+    print(c.orange + "Hashing " + passwords.len + " passwords..." + c.ennd)
+    hashDone    = 0
+    hashTotal   = passwords.len
+    hashReport  = 0
+    for pw in passwords
+        gco.rt[md5(pw)] = pw
+        hashDone = hashDone + 1
+        hashPct = floor(hashDone / hashTotal * 100)
+        if hashPct >= hashReport + 25 then
+            hashReport = hashPct
+            print(c.grey + "  hashing " + hashPct + "%  (" + hashDone + "/" + hashTotal + ")" + c.ennd)
+        end if
+    end for
+    // import any .txt or .lst wordlist files from phantom folder
+    localComp = myComp
+    if not localComp then localComp = get_shell.host_computer
+    dir = localComp.File(currentPath)
+    loaded = 0
+    if dir and dir.is_folder then
+        files = dir.get_files
+        for f in files
+            nl = f.name.lower
+            if nl.len >= 4 and (nl[-4:] == ".txt" or nl[-4:] == ".lst" or nl[-4:] == " ") then
+                content = f.get_content
+                if content then
+                    lines = content.split(char(10))
+                    for line in lines
+                        pw = line.split(" ")[0]
+                        if pw != "" then gco.rt[md5(pw)] = pw
+                    end for
+                    loaded = loaded + 1
+                    print(c.grey + "  imported: " + f.name + c.ennd)
+                end if
+            end if
+        end for
+    end if
+    print(c.green + "Rainbow table ready: " + gco.rt.len + " entries  (" + loaded + " wordlist(s) imported)" + c.ennd)
+end function
+
+RTGen = function(orderArg, minLenArg, maxLenArg)
+    buildRainbowTable(orderArg, minLenArg, maxLenArg)
+    print(c.orange + "Writing " + gco.rt.len + " entries to disk..." + c.ennd)
+    rtPath = "/root/ai/tp"
+    rtDir = myComp.File(rtPath)
+    keys = gco.rt.indexes
+    total = keys.len
+    count = 0
+    output = ""
+    i = 0
+    while i < total
+        hash = keys[i]
+        output = output + gco.rt[hash] + ":" + hash + char(10)
+        if output.len > 159000 or i == total - 1 then
+            num = "00" + count
+            filename = "rt." + num[-3:] + ".rt"
+            myComp.touch(rtPath, filename)
+            f = myComp.File(rtPath + "/" + filename)
+            if f then
+                f.set_content(output)
+                count = count + 1
+            end if
+            output = ""
+        end if
+        i = i + 1
+    end while
+    print(c.green + "rtgen: wrote " + count + " file(s) to " + rtPath + c.ennd)
+    print(c.green + "rtgen: " + gco.rt.len + " total entries" + c.ennd)
+end function
+
+// ── RtLearn ──────────────────────────────────────────────────────
+// Called whenever CrackHash cracks a hash the rainbow table didn't
+// already have (i.e. via gco.crypto.decipher, the slow official
+// cracker) — memoizes it into gco.rt for instant reuse this session,
+// AND appends it to a plain wordlist file in currentPath so
+// buildRainbowTable's own wordlist-import step (it already scans
+// every .txt/.lst file there — see the "import any .txt or .lst
+// wordlist" loop above) picks it back up on the next buildrt/rtgen
+// run, even though that wipes gco.rt clean first. This is what turns
+// every crack into a permanent addition to the password db instead of
+// a one-off lookup that's forgotten the moment gco.rt regenerates.
+// -- LearnPassword --------------------------------------------------
+// Appends a plaintext password to learned.txt (dedup'd), so
+// buildRainbowTable's wordlist-import step picks it up on the next
+// buildrt/rtgen run. Split out of RtLearn so anything that discovers
+// a working plaintext password — not just CrackHash's hash->pw path —
+// can feed it back into the permanent word list (see ChainSaw.recurse
+// / ChainSaw.PregenAttack in chainsaw.src).
+LearnPassword = function(pw)
+    if not pw or pw == "" then return
+    learnedPath = currentPath + "/learned.txt"
+    f = myComp.File(learnedPath)
+    if not f then
+        myComp.touch(currentPath, "learned.txt")
+        f = myComp.File(learnedPath)
+    end if
+    if not f then return
+
+    existing = f.get_content
+    if not existing or existing == null then existing = ""
+    if existing.split(char(10)).indexOf(pw) != null then return
+    f.set_content(existing + pw + char(10))
+end function
+
+RtLearn = function(hash, pw)
+    if not pw or pw == "" then return
+    if not gco.hasIndex("rt") or gco.rt == null then gco.rt = {}
+    gco.rt[hash] = pw
+    LearnPassword(pw)
+end function
+
+
+rtDebug = function(inp)
+gcoT = get_custom_object
+if gcoT.hasIndex("rt") then
+	print(c.rust + " current rt.len = " + gcoT.rt.len)
+	else
+	print(c.red + " no rainbows :(")
+end if
+
+// -- RTGen - write rainbow table to disk --------------------------
+
+CrackHash = function(hash)
+    if not gco.hasIndex("rt") or gco.rt == null then buildRainbowTable
+    if gco.rt.hasIndex(hash) then return gco.rt[hash]
+    if gco.crypto then
+        pw = gco.crypto.decipher(hash)
+        if pw then RtLearn(hash, pw)
+        return pw
+    end if
+    return null
+end function
+
+
+end function
+CommandTable["rtlen"] = @rtDebug
+
+
+CmdBuildrt = function(inp)
+    // buildrt [order] [minLen] [maxLen]
+    // defaults: order=3 min=3 max=12  →  ~48k passwords
+    // example:  buildrt 2 3 14        →  ~200k+ passwords
+    oA = null
+    mnA = null
+    mxA = null
+    if inp.len >= 2 then oA  = inp[1].to_int
+    if inp.len >= 3 then mnA = inp[2].to_int
+    if inp.len >= 4 then mxA = inp[3].to_int
+    gco.rt = null
+    buildRainbowTable(oA, mnA, mxA)
+end function
+CommandTable["buildrt"] = @CmdBuildrt
+//====================================================================================================================
+
+random = function(inp)
+happy = ["are you happy?", "no"]
+
+print(happy)
+
+end function
+CommandTable[happy] = @random
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
