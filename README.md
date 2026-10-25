@@ -1,21 +1,45 @@
 # phantom
-Multi-Tool for Grey Hack the Game
-# phantom
 
-A GreyScript hacking toolkit for [Grey Hack](https://store.steampowered.com/app/605230/Grey_Hack/) — a custom shell that layers piping, variables, aliases, macros, an object stack, and a persistent exploit database on top of the game's scripting API, plus a large set of recon/exploitation commands for both local and remote targets.
+A GreyScript hacking toolkit for [Grey Hack](https://store.steampowered.com/app/605230/Grey_Hack/) — a custom shell that layers **piping, variables, aliases, macros, an object stack, and a persistent exploit database** on top of the game's scripting API, plus a large set of recon/exploitation commands for local and remote targets.
 
-Architecturally, each command is self-registering: a topic file (`ops.src`, `hack.src`, etc.) defines `CmdFoo = function(inp) ... end function` and immediately follows it with `CommandTable["foo"] = @CmdFoo`. Adding or finding a command is a one-file, one-location affair — there's no separate manifest to keep in sync.
+> Every command is self-registering: a topic file (`ops.src`, `hack.src`, …) defines `CmdFoo = function(inp) … end function` and immediately follows it with `CommandTable["foo"] = @CmdFoo`. Adding or finding a command is a one-file, one-location affair — no separate manifest to keep in sync.
+
+---
+
+## Contents
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [First run](#first-run)
+- [Core concepts](#core-concepts)
+- [Jumping, libs & sessions](#jumping-libs--sessions)
+- [Command reference](#command-reference)
+  - [Local](#local)
+  - [Network / recon](#network--recon)
+  - [Hacking](#hacking)
+  - [Remote](#remote-act-on-the-held-object)
+  - [Stack](#stack)
+  - [Variables & scripting](#variables--scripting)
+  - [Misc](#misc)
+- [Plugin modules](#plugin-modules)
+- [Payload scripts](#payload-scripts)
+- [Persisted files](#persisted-files)
+- [Development notes](#development-notes)
+
+---
 
 ## Requirements
 
-- Grey Hack, with `metaxploit.so` and `crypto.so` available (either at `/lib/` or alongside phantom's own files).
-- A computer with enough disk space for phantom's `.src` files plus whatever `db.txt`/`deadlibs.txt`/`aliases.txt` grow to over a session.
+- Grey Hack, with `metaxploit.so` and `crypto.so` available (at `/lib/` or alongside phantom's files).
+- Disk space for phantom's `.src` files plus whatever `db.txt` / `deadlibs.txt` / `aliases.txt` grow to over a session.
+
+---
 
 ## Installation
 
-GreyScript's `import_code` requires a literal path known when the script is loaded — it can't take a computed or relative path. Because of that, **phantom must live at `/root/ai/pt/`** on the machine you run it from, since that's the path hardcoded into `phantom.src`'s imports:
+GreyScript's `import_code` needs a **literal** path known when the script loads — it can't take a computed or relative path. So **phantom must live at `/root/ai/pt/`**, the path hardcoded in `phantom.src`:
 
-```
+```greyscript
 import_code("/root/ai/pt/macro.src")
 import_code("/root/ai/pt/hack.src")
 import_code("/root/ai/pt/ops.src")
@@ -23,19 +47,25 @@ import_code("/root/ai/pt/remote.src")
 import_code("/root/ai/pt/chainsaw.src")
 import_code("/root/ai/pt/stack.src")
 import_code("/root/ai/pt/game.src")
-import_code)"/root/ai/pt/rt.src")
+import_code("/root/ai/pt/rt.src")
 ```
 
-If you want to install somewhere else, edit those seven lines to match. (Note: a handful of comments elsewhere in the codebase reference `/root/ai/tp/` instead of `/root/ai/pt/` when suggesting `build` commands for payloads — that's just an inconsistency in the comment text, not a functional requirement. `build` takes whatever path you actually type, so use the same path you installed phantom at.)
+Installing elsewhere? Edit those eight lines to match.
+
+> Some comments elsewhere say `/root/ai/tp/` instead of `/root/ai/pt/` in `build` suggestions — that's just stale comment text, not a requirement. `build` uses whatever path you type, so use your actual install path.
 
 **Steps:**
 
-1. Copy every `.src` file at the repo root (`phantom.src`, `ops.src`, `hack.src`, `remote.src`, `chainsaw.src`, `stack.src`, `macro.src`, `game.src`) into `/root/ai/pt/` on your Grey Hack machine. (`hack.src` now also holds what used to be `core.src`; `macro.src` also holds former `misc.src`; `stack.src` also holds former `vars.src`; `recon.src` was dropped entirely — its content was already fully duplicated inside `remote.src`.)
-2. Copy the `data/` folder (`pregens.src`, `samples.src`) alongside them — `chainsaw.src` loads these as ChainSaw's password wordlists, falling back to a smaller built-in list if they're missing.
-3. Make sure `metaxploit.so` and `crypto.so` are reachable, either in `/lib/` or copied into `/root/ai/pt/` next to `phantom.src`.
-4. Build `phantom.src` in-game (`build /root/ai/pt/phantom.src /root/ai/pt`) to produce the runnable `phantom` binary.
-5. Copy the `payloads/` folder in too (`getlogs.src`, `libscan.src`, `netmap.src`, `slb.src`, `wsx.src`). These aren't imported at startup — they're separate scripts that get uploaded to remote targets on demand and only need building the first time each is actually used (phantom prints the exact `build` command to run if it can't find a compiled copy).
-6. Optional: copy the `modules/` folder in too and build `modules/hello.src` if you want to try the plugin module system — see "Plugin modules" below. Skip this entirely if you don't need it; phantom runs fine with no `modules/` folder at all.
+1. Copy every root `.src` file (`phantom.src`, `ops.src`, `hack.src`, `remote.src`, `chainsaw.src`, `stack.src`, `macro.src`, `game.src`, `rt.src`) into `/root/ai/pt/`.
+2. Copy the `data/` folder (`pregens.src`, `samples.src`) alongside them — `chainsaw.src` / `rt.src` load these as password wordlists, falling back to a small built-in list if missing.
+3. Make sure `metaxploit.so` and `crypto.so` are reachable (in `/lib/` or copied next to `phantom.src`).
+4. Build it: `build /root/ai/pt/phantom.src /root/ai/pt` → produces the runnable `phantom` binary.
+5. Copy the `payloads/` folder too (`getlogs.src`, `libscan.src`, `netmap.src`, `slb.src`, `wsx.src`). These aren't imported at startup — they're uploaded to targets on demand and only need building the first time each is used (phantom prints the exact `build` command if it can't find a compiled copy).
+6. *Optional:* copy `modules/` and build `modules/hello.src` to try the plugin system (see [Plugin modules](#plugin-modules)). Skip it entirely otherwise — phantom runs fine with no `modules/` folder.
+
+> **Heritage:** `hack.src` absorbed the former `core.src`; `macro.src` absorbed `misc.src`; `stack.src` absorbed `vars.src`; `recon.src` was dropped (its content was already duplicated in `remote.src`).
+
+---
 
 ## First run
 
@@ -43,85 +73,349 @@ If you want to install somewhere else, edit those seven lines to match. (Note: a
 ./phantom
 ```
 
-On startup phantom loads `metaxploit.so`/`crypto.so`, auto-creates/loads `db.txt` (exploit database), `deadlibs.txt` (libs confirmed to have nothing exploitable), and `aliases.txt` (persisted command aliases) if present in the same folder, then drops you at a prompt. Type `help` for the current command list (`help -a` for everything, or `-l`/`-n`/`-h`/`-r` for local/network/hacking/remote subsets).
+On startup phantom loads `metaxploit.so` / `crypto.so`, auto-creates/loads `db.txt`, `deadlibs.txt`, and `aliases.txt` (if present), then drops you at a prompt.
 
-Headless mode: `phantom --rshell [port]` installs and starts an rshell daemon on the local machine instead of dropping into the interactive shell (defaults to port 1222).
+Type **`help`** for the command list — `help -a` for everything, or `-l` / `-n` / `-h` / `-r` for local / network / hacking / remote subsets.
+
+**Headless:** `phantom --rshell [port]` installs and starts an rshell daemon on the local machine instead of opening the interactive shell (default port 1222).
+
+---
 
 ## Core concepts
 
-**Piping.** `scan pt 0 | grab pt 0` — pipe a command's result into the next. `cmd |> other` queues `other` to run as a separate stage afterward, once the first cmd completes (including anything it queued via macros/foreach).
+### Piping
 
-**Clips (`@var`).** Store a result by ending a command with a bare `@name` (e.g. `randip @ip`), then reference it later with `@ip`. `@ip.len` gives its length (or comma-count for a list-like string). `@o key` reads any top-level custom-object index directly (not just clips). `@lan` is a special read-only token (not a stored clip) that always resolves to the currently held `object`'s LAN ip — e.g. `uselib -l @lan` inside a macro instead of `ifconfig`-ing and clipping it manually first; prints a warning and leaves the token untouched if nothing's currently held. Clips persist across restarts via the game's custom object.
+```
+scan pt 0 | grab pt 0      # pipe a command's result into the next
+cmd |> other               # queue `other` as a separate stage, after cmd fully finishes
+```
 
-**Object-list clips.** `stack | clip @b` captures the *live* shell/computer objects currently on the stack into `@b` — a separate store from normal string clips, since a shell reference can't be joined into text. Iterate them with `foreach @b | <cmd>` at the prompt (each iteration sets the active `object` to the next one, same engine `stackfor` uses) or `for @x in @b ... endfor` inside a macro. Useful after something like `wstack`, which populates the stack with several targets at once — capture them, then run a command against every one.
+`|>` runs its stage once the first command completes — *including* anything it queued via macros/foreach.
 
-**Local vs. remote state.** `lObject`/`myShell`/`myComp` track what you're standing on locally; `object`/`remotePath` track a held remote shell/computer. Most commands are either local (`ls`, `cd`, `ps`) or remote (`rls`, `rcd`, `rps`), with the remote ones acting on whatever's currently held in `object`.
+### Clips (`@var`)
 
-**The stack.** `push`/`pop`/`stack`/`swap` let you juggle multiple shell/computer objects at once — useful when a scan turns up several targets and you don't want to lose the earlier ones.
+Store a result by ending a command with a bare `@name`, then reference it later:
 
-**Aliases.** `alias name cmd args...` defines a shortcut; `alias -d name` removes it. Persisted to `aliases.txt`.
+```
+randip @ip                 # store
+scan @ip 80                # use
+@ip.len                    # length (or comma-count for a list)
+```
 
-**Macros.** `.bat`-style scripts stored under `mac`'s macro folder, supporting `if`/`while`/`for`/`switch`/`try`/`catch`/inline `func`/`endfunc` blocks, run via `mac <name>`. `mac trace <name>` runs it the same way but prints each compiled line right before it executes — including the internal control-flow sentinels a `for`/`if`/etc. compiles down to, not just the source text — for tracking down exactly where a misbehaving macro goes wrong. Piping into `mac` feeds the result in as `$1` — e.g. `randip | mac t1` hands the generated ip to the macro as its first arg, with any explicitly typed args shifting to `$2`, `$3`, etc. See [MACROS.md](MACROS.md) for the full syntax guide and how to write one.
+- `@o key` reads any top-level custom-object index directly (not just clips).
+- `@lan` is a **read-only token** (not a stored clip) that always resolves to the held `object`'s LAN ip — e.g. `uselib -l @lan` in a macro instead of `ifconfig`-ing and clipping it. Warns and leaves the token untouched if nothing's held.
+- Clips persist across restarts via the game's custom object.
 
-**The exploit database (`db.txt`).** Every overflow attempt phantom makes — success or failure, from any command — gets recorded per exact lib+version+mem+val, so a repeat encounter with the same lib+version can skip straight to known-good candidates instead of re-scanning from scratch. `edb` inspects/manages it directly.
+### Object-list clips
 
-**Jumping and local modes.** `jump` copies phantom itself onto a held target and launches it there, giving you an independent phantom session physically running on that machine. `jump -b`/`--bin` uploads just the compiled `phantom` binary instead of the whole toolkit folder, for a quicker round trip when all you need over there is a lib to load and bring back — `jumpbin` does the identical thing with no flag parsing at all, and is the more reliable of the two (added after `-b` proved flaky to detect in testing; if `jump -b` misbehaves, use `jumpbin` instead). Once you're there, `scanlan`/`netmap`/`lanenum` all accept `-l` to operate on that machine's own network directly instead of requiring a separately-held remote shell.
+`stack | clip @b` captures the **live** shell/computer objects on the stack into `@b` (a separate store from string clips — a shell reference can't be joined into text). Iterate them:
 
-`jump --loadlib <name>` (or `jumpbin --loadlib <name>`) skips the interactive nested session entirely: the target auto-loads that lib from *its own* `/lib` and exits immediately (a headless `phantom --loadlib <name>` mode, same pattern `--rshell` already uses for passing a launch arg), handing the loaded lib back through the normal `gco.local` carry the instant `comp.launch()` returns. `--loadlib` implies `-b`/`--bin` automatically — grabbing a lib and coming straight back never needs the whole `tp` folder uploaded, just the compiled binary plus its `metaxploit.so`/`crypto.so` companions. Chain it with the existing `|>` stage syntax for a full one-shot jump+load-a-remote-lib+bring-it-home+attack: `jump --loadlib libhttp.so |> uselib -l 10.0.15.5 -c` — nothing to type by hand on the target at all. Careful what you name here: this loads from the *target's* own `/lib`, not yours (that's `loadmx`/`loadlib` run locally before jumping, for the opposite direction — see below).
+```
+foreach @b | <cmd>         # at the prompt; sets active object to each in turn
+for @x in @b … endfor      # in a macro
+```
 
-Whatever's held in `globals.activeLib`/`globals.activeMx` when you `jump` automatically carries into the nested session, and automatically comes back when you `exit`/`quit` out of it — no `leave`/`claim` needed for that round trip. This is carried via `gco.local`: `Propagate` stashes both before launching, `phantom.src`'s startup reads and clears it, `exit`/`quit` writes the (possibly updated) current values back, and `Propagate` reads them again the instant `comp.launch()` returns. Contrary to earlier assumptions, a *live* lib/mx handle does survive an `object.launch()` boundary via `gco` (confirmed with `payloads/test_libsurvival_parent.src`/`test_libsurvival_child.src` — a standalone pair of throwaway test scripts, not part of phantom proper), which is what makes carrying the live handle directly workable instead of just a name. `loadlib <name>` loads a lib that's already sitting in the current machine's own `/lib` straight into `globals.activeLib` with no `leave`/`claim` indirection — the natural way to populate it right before a `jump`/`quit` round trip (`loadlib -c` clears it). `loadmx [opt:path]` does the same for `globals.activeMx` (defaulting to phantom's own `metaxploit.so` if no path given, `loadmx -c` to clear) — this is the piece that actually gets "scan with my own metaxploit instead of the target's" working end to end: run `loadmx` *before* `jump`/`jumpbin` so it loads via your own machine's copy, then the `gco.local` carry brings it along automatically, and `uselib` already prefers `globals.activeMx` the instant it's set. Loading a lib or mx *after* you've already jumped in loads it from whatever machine you're currently standing on instead — worth being deliberate about which side of the jump you run `loadlib`/`loadmx` on. `libvers` lists every lib in the current machine's `/lib` with its version, and `activelib`/`libdebug` are small debug commands for inspecting what's currently held in `globals.activeLib`/`gco.claimLib`.
+Great after `wstack` populates the stack with several targets at once.
 
-`leave`/`claim` are for a different case: handing something to an *independent* phantom session you're not directly jumping into/out of (e.g. two sessions on separate machines that only overlap via `gco`) — e.g. root a target with `autoroot -l` inside a jumped session, then `claim` it from your original session to hold it there instead. This works because `get_custom_object()` is a persistent, player-scoped store shared by every phantom session you run, not tied to a single process. `leave -lib <name> [opt:port]` does the same for a lib: it stores the name (plus, if you're holding a shell at the time, that shell's host ip and the given port), and `claim` first tries loading a fresh handle for it locally from `/lib`, falling back to redialing that ip:port and `dump_lib`-ing it if the name isn't on disk here (e.g. it was pulled off a remote target rather than existing as a real file). Watch out for a same-named-but-different-version local file shadowing the intended remote one, since local load is tried first and doesn't check version. `leave -mx [opt:path]` does the same for a `metaxploit.so` copy (into `globals.activeMx`) — useful since a different metaxploit.so binary (e.g. pulled from a specific target) can decode things your own local one can't. The path is optional; `leave -mx` alone defaults to phantom's own `metaxploit.so`. `uselib` is the first thing that actually consumes both: it scans with `globals.activeMx` if one's held (falling back to the default metaxploit otherwise) and attacks `globals.activeLib`, printing which lib+version it's using before it starts. `uselib -l <lanip>` (or a bare positional inject arg, same thing) bounces onto a LAN device via the overflow's 3rd arg, same trick `scanlib`/`LibScan` use. `uselib -c` is computer-*only* — without it, only a shell result counts as a hit; with it, only a computer does (a shell result is rejected, not accepted alongside), and `-c` implies `-a` since stopping at the first computer found isn't useful for discovery. `uselib -a` tries every decoded candidate instead of stopping at the first hit, pushing every match onto the object stack (like `wstack`) instead of landing just one in `globals.object` — still shells-only unless `-c` is also given. Plain `claim` auto-detects shell/lib/mx/result in that priority order, which only works cleanly if one thing is pending at a time — if you `leave` more than one kind before claiming any, whichever check comes first always wins and the rest silently never get reached. Pass an explicit `claim -shell` / `claim -lib` / `claim -mx` / `claim -result` to bypass that and grab exactly the one you mean.
+### Local vs. remote state
 
-**Relaying a lib scan between sessions.** `db.txt` is a per-machine *file*, not something `gco` shares the way a shell or lib name is — a scan recorded in one session's `db.txt` is invisible to another session running elsewhere. To relay a scan anyway: `leave -lib <name>` from session B, `claim -lib` from session A (loads it there), `uselib -s` on session A (scans + records to A's own `db.txt`), `leave -result` on session A (packages every `db.txt` entry for that lib+version into `gco.claimResult`), then `claim -result` back on session B (merges those entries into B's own `db.txt` via `EdbAdd`). Useful for leaning on a long-lived phantom install's accumulated exploit knowledge from a short-lived jumped session without needing to sync `db.txt` files by hand.
+- `lObject` / `myShell` / `myComp` — where you stand **locally**.
+- `object` / `remotePath` — a held **remote** shell/computer.
+
+Most commands are either local (`ls`, `cd`, `ps`) or remote (`rls`, `rcd`, `rps`); the remote ones act on whatever's held in `object`.
+
+### The stack
+
+`push` / `pop` / `stack` / `swap` juggle multiple shell/computer objects at once — handy when a scan turns up several targets and you don't want to lose the earlier ones.
+
+### Aliases
+
+```
+alias name cmd args...     # define a shortcut
+alias -d name              # remove it
+```
+
+Persisted to `aliases.txt`.
+
+### Macros
+
+`.bat`-style scripts under `mac`'s folder (`/root/ai/mac/`), supporting `if` / `while` / `for` / `switch` / `try`/`catch` / inline `func`. Run with `mac <name>`.
+
+- `mac trace <name>` runs it but prints each **compiled** line before it executes (including internal control-flow sentinels) — for finding exactly where a misbehaving macro goes wrong.
+- Piping into `mac` feeds the result as `$1`: `randip | mac t1` hands the ip in as the first arg, shifting typed args to `$2`, `$3`, …
+
+See **[MACROS.md](MACROS.md)** for the full syntax guide.
+
+### The exploit database (`db.txt`)
+
+Every overflow attempt — success or failure, from any command — is recorded per exact **lib + version + mem + val**. A repeat encounter with the same lib+version skips straight to known-good candidates instead of re-scanning. `edb` inspects/manages it.
+
+---
+
+## Jumping, libs & sessions
+
+### jump / jumpbin
+
+`jump` copies phantom onto a held target and launches it there — an independent phantom session running physically on that machine. Once there, `scanlan` / `netmap` / `lanenum` all accept `-l` to work on that machine's own network directly.
+
+| Command | Does |
+|---|---|
+| `jump` | upload the whole toolkit folder + launch |
+| `jump -b` / `--bin` | upload just the compiled `phantom` binary (quicker round trip) |
+| `jumpbin` | same as `jump -b`, no flag parsing — **more reliable**; use it if `jump -b` misbehaves |
+
+### jump --loadlib — one-shot remote lib grab
+
+`jump --loadlib <name>` (or `jumpbin --loadlib <name>`) skips the interactive nested session: the target auto-loads that lib **from its own `/lib`** and exits immediately, handing the loaded lib back through `gco.local`. `--loadlib` implies `-b`/`--bin`. Chain with `|>` for a full one-shot:
+
+```
+jump --loadlib libhttp.so |> uselib -l 10.0.15.5 -c
+```
+
+> Careful: this loads from the **target's** `/lib`, not yours. (For the opposite direction — your lib onto the target — use `loadmx`/`loadlib` locally *before* jumping.)
+
+### Carrying libs across a jump
+
+Whatever's in `globals.activeLib` / `globals.activeMx` when you `jump` **auto-carries in**, and **auto-returns** when you `exit`/`quit` — no `leave`/`claim` needed for that round trip (carried via `gco.local`).
+
+| Command | Does |
+|---|---|
+| `loadlib <name>` | load a lib from the **current** machine's `/lib` into `globals.activeLib` (`loadlib -c` clears) |
+| `loadmx [path]` | same for `globals.activeMx` (defaults to phantom's own `metaxploit.so`; `-c` clears) |
+| `libvers` | list every lib in the current machine's `/lib` with its version |
+| `activelib` / `libdebug` | debug: inspect `globals.activeLib` / `gco.claimLib` |
+
+> Run `loadmx` **before** `jump`/`jumpbin` to "scan with my own metaxploit instead of the target's" — the `gco.local` carry brings it along, and `uselib` prefers `globals.activeMx` the moment it's set. Loading a lib/mx *after* jumping loads it from the machine you're now standing on — be deliberate about which side you run it on.
+
+### leave / claim — hand-off between independent sessions
+
+For two sessions that only overlap via `gco` (e.g. one jumped, one original) — not a direct jump-in/out. Works because `get_custom_object()` is a persistent, player-scoped store shared by every phantom session you run.
+
+| Command | Does |
+|---|---|
+| `leave` / `claim` | hand a held shell/computer between sessions |
+| `leave -lib <name> [port]` | store a lib name (+ held shell's ip/port); `claim` loads it locally from `/lib`, else redials ip:port and `dump_lib`s it |
+| `leave -mx [path]` | store a `metaxploit.so` copy into `globals.activeMx` (a target's mx can decode things yours can't) |
+| `leave -result` / `claim -result` | relay **db.txt scan knowledge** for the lib in `globals.activeLib` (see below) |
+
+`claim` alone auto-detects shell → lib → mx → result in that order — which only works cleanly with one thing pending. Use explicit `claim -shell` / `-lib` / `-mx` / `-result` to grab exactly one.
+
+> Watch for a same-named-but-different-version local lib shadowing the intended remote one — local load is tried first and doesn't check version.
+
+### uselib
+
+The command that consumes `activeLib` / `activeMx`: scans with `globals.activeMx` if held (else default metaxploit), attacks `globals.activeLib`, printing which lib+version it uses.
+
+| Flag | Effect |
+|---|---|
+| `-s` | recon only — decode + record candidates to `db.txt`, no attack |
+| `-l <lanip>` | bounce onto a LAN device (same as a bare positional inject arg) |
+| `-c` | computer-**only** (rejects a shell result); implies `-a` |
+| `-a` | try every candidate, push every match to the stack (shells-only unless `-c`) |
+
+### Relaying a lib scan between sessions
+
+`db.txt` is a per-machine *file*, not shared via `gco`. To relay a scan from session B to session A:
+
+```
+# session B:   leave -lib <name>
+# session A:   claim -lib        (loads it)
+# session A:   uselib -s         (scans + records to A's db.txt)
+# session A:   leave -result     (packages db.txt entries into gco.claimResult)
+# session B:   claim -result     (merges them into B's db.txt)
+```
+
+Lets a short-lived jumped session lean on a long-lived install's accumulated exploit knowledge without syncing `db.txt` by hand.
+
+---
 
 ## Command reference
 
-Run `help -a` in phantom for the live, always-current list. Grouped summary:
+Run **`help -a`** in phantom for the always-current list. Grouped summary below.
 
 ### Local
-`ls`, `tree`, `cd`, `cat`, `cp`, `mv`, `rm`, `mkdir`, `touch`, `chmod`, `chown`, `chgrp`, `search`, `ps`, `kill`, `passwd`, `useradd`, `userdel`, `pwd`, `whoami`, `clear`, `decipher`, `cover`, `corlog`, `escalate`, `terminal`, `randip`, `drop`
+
+| Command | Description |
+|---|---|
+| `ls` `tree` `cd` `cat` | filesystem browsing |
+| `cp` `mv` `rm` `mkdir` `touch` | file ops |
+| `chmod` `chown` `chgrp` | permissions |
+| `search` | find files by keyword |
+| `ps` `kill` | processes |
+| `passwd` `useradd` `userdel` | local users |
+| `pwd` `whoami` `clear` | basics |
+| `decipher` | crack a hash (rainbow table → crypto.decipher) |
+| `cover` | clean up traces |
+| `corlog` | corrupt system.log on current object |
+| `escalate` | escalate local privileges via lib scan |
+| `terminal` | open a new local terminal |
+| `randip` | generate a random IP (`randip N` for a bulk comma-list) |
+| `drop` | drop the held object (`-l` local, `-r` remote) |
 
 ### Network / recon
-`nmap` (`-y` to auto-confirm setting the scanned ip as target instead of prompting — also implied automatically when run from inside a macro, though without `-y` a macro run just skips the prompt and declines), `ping`, `nslookup`, `whois`, `whoismail`, `ifconfig`, `set`, `unset`, `ssh` (`ssh [user@pass] [ip] [port]` for raw creds, or `ssh [name]` to connect with a saved portal), `sshsave`/`sshlist`/`sshdel` (save/list/remove your own logins for quick reconnect — persisted to `sshportals.txt`, not for other people's stolen creds, those go through `harvest`/`db.txt` instead), `scp`, `routerdata`, `proxy`, `proxystatus`, `proxyclear`, `netmap` (`-l` for local), `hacklan`, `lanenum` (`-l` for local), `ipenum`
+
+| Command | Description |
+|---|---|
+| `nmap [ip] [-y]` | `-y` auto-confirms setting the scanned ip as target (implied inside a macro) |
+| `ping` `nslookup` `whois` `whoismail` | lookups |
+| `ifconfig` | local network info |
+| `set` / `unset` | set/clear target IPs |
+| `ssh [user@pass] [ip] [port]` | SSH with raw creds, or `ssh [name]` for a saved portal |
+| `sshsave` / `sshlist` / `sshdel` | save/list/remove **your own** logins (→ `sshportals.txt`) |
+| `scp` | upload/download a file over the held shell |
+| `routerdata` | router info (ESSID/BSSID, ports, LAN devices) |
+| `proxy` / `proxystatus` / `proxyclear` | anonymizing proxy chain |
+| `netmap [-l]` | LAN recon only, no attacking (`-l` local) |
+| `hacklan` | bounce to a LAN device |
+| `lanenum [-l]` | list LAN IPs (`-l` local) |
+| `ipenum` | find LAN IPs with a given port open |
+| `ports <ip>[,ip2…] [ports] [-r]` | check a port list against one/many IPs; `-r` = metaxploit-free router scan (public IPs) |
 
 ### Hacking
-`edb`, `scan` (`scan ip port lanip -lib libname` delegates to `scanlib`'s db.txt-known-first logic instead of guessing; add `mem val` after the lib name to force an exact pair instead of auto-detecting), `scanlan` (scan/attack whatever's bound to an ip:port; `-l` to scan locally instead of via a held shell), `scanlib` (scan/attack a *named* lib on a held shell's target, with an optional LAN-ip inject; the loaded lib itself lands in `globals.activeLib` automatically, same effect `loadlib` gives you locally), `grab`, `exploit` (interactive candidate picker), `report` (full exploit report — `report [ip] [port]` tries *every* candidate for the bound lib+version live instead of stopping at the first hit like scan/grab, printing a `Hooked: <user> <type>` line for each one that produces something and logging everything to db.txt; known candidates skip the scan/decode step entirely, only a genuinely new lib+version pays for a full scan. Bare `report` or `report [libname] [version]` instead prints the same report straight from db.txt with zero live scanning — just whatever's already known for the most-recently-recorded lib+version, or a specific one you name. Add `-v` to any form for a `MEMORY VULNER TYPE USER` column-aligned table instead of the live per-candidate prints, with requirement text shown under whichever rows have it), `getroot`, `autoroot` (ChainSaw password cracker; `-l` for local), `ar` (dictionary attack via rainbow table; `-l` for local), `enum`, `harvest` (cracked user:pass pairs clip via `harvest | clip @b`), `peek` (same Mail.txt/Bank.txt/`/etc/passwd` walk as `harvest`, but skips `CrackHash` entirely — surfaces the raw user:hash pairs instead, e.g. `peek | clip @a | decipher` to crack them as a separate step; `--stack` variant same as `harveststack`), `wifi`, `sniff [opt:-e]` (passively captures SSH/FTP credentials passing through whatever device phantom is physically running on — `jump` onto a router first to snoop its traffic; wraps the game's own `metaxploit.sniffer()`, matching the official in-game sniffer tool exactly. Blocks until it catches a connection, and catching one closes the current terminal session as a side effect — confirmed, no known workaround, so only run it from a session you're OK losing), `smtplist <ip> <port>` (lists every username + email registered on a mail service via `crypto.so`'s `smtp_user_list` — turns a password attack into guessing just the password against confirmed-real accounts instead of both username and password blind), `siphon`, `wstack` (no `-l`: uploads + launches on the held shell so you don't have to jump first — confirmed this is more than convenience, since `get_router(ip)`/`devices_lan_ip` queried from *outside* a network returns a much more limited view — one representative address per subnet instead of every host in it — than querying it from a script physically running inside that network. `-l`: run inline instead, like `uselib` — you need to already be positioned on that LAN yourself. No libname given: uses `globals.activeLib` if one's claimed/loaded, else defaults to `init.so`/`libhttp.so`; whatever lib actually gets used lands back in `globals.activeLib` too, same as `scanlib`. Tries every candidate per device instead of stopping at the first hit, only pushing a device once a root-level computer bounce lands — a guest-only hit is discarded, not settled for), `wstackall` (identical to `wstack` in every other respect — same `-l`/libname args, same LAN discovery — but keeps a guest-level shell/computer bounce instead of discarding the device when nothing on it lands root), `cascade` (runs `wstack`'s remote mode from every shell on the object stack simultaneously — a genuine multi-router sweep, no jumping between them needed), `pwnlan`, `crack`, `buildrt`, `rtgen` (any hash `CrackHash` cracks via the slow official decipher — i.e. one the rainbow table didn't already have — gets learned into `<phantom>/learned.txt`, so it's picked up by every future `buildrt`/`rtgen`'s wordlist-import step instead of being deciphered again from scratch), `jump` (`-b`/`--bin` for a binary-only upload; `jumpbin` does the same with no flag parsing; `--loadlib name` for a fully headless jump that auto-loads a lib from the target's own `/lib` and returns immediately — chain with `|> uselib ...`), `leave`/`claim` (hand a held shell/computer, a lib name, a metaxploit.so path, or db.txt scan results off between independent phantom sessions, e.g. across a `jump` — `leave -result`/`claim -result` specifically relays db.txt exploit knowledge for whichever lib is held in `globals.activeLib`), `loadlib` (load a local lib by name straight into `globals.activeLib`), `libvers` (list local `/lib` libs + versions), `activelib`/`libdebug` (debug: inspect `globals.activeLib`/`gco.claimLib`), `plant` (uploads weaklib(s) from `/root/InsecureLibs` — `plant -l lib1 -l lib2 -d /lib` for the held shell, or add `--stack` to sweep every root shell on the object stack instead; no `-l` defaults to `init.so`+`libhttp.so`), `getlogs <sitelistfile> [destfolder]` (bulk site-list auto-exploiter: nslookups + roots whatever's bound to port 80 on each host in the file using phantom's own db.txt-known exploits first, full scan/decode fallback, then downloads `/var/system.log` from every one it roots into `destfolder`, default `/root/Downloads`), `rshell` (`rshell init [opt:-l] [port]` installs the server on the held remote shell, or `-l` to install it on wherever phantom itself is physically running instead — e.g. right after `jump`, without needing to grab a shell pointing back at yourself, which the remote path explicitly rejects as "your own machine"; `rshell all [cmd...]` catches connections the same way bare `rshell` does, then runs `cmd` against every shell that connected instead of making you pick just one — `cmd` can be a `;`-separated pipeline (e.g. `grab ip port ; push`, stopping early on that shell if a stage fails, same stop-on-fail semantics the real pipe engine uses; `;` instead of `|` deliberately, to avoid both phantom's own top-level pipe handling and a confirmed GreyScript `split()` regex-pattern quirk with `|`), but no `@var`/`@o` substitution inside it), `upgrade`, `updatelib`, `chainsaw` (Markov/pregen password cracker — `run`/`load`/`deploy`), `reset` (clears the in-session `scanlan`/`report` result caches, which otherwise just grow for the life of the phantom process with nothing pruning them — does *not* touch the rainbow table or your clips/aliases, those aren't disposable cache)
+
+| Command | Description |
+|---|---|
+| `edb` | inspect/manage the exploit database |
+| `scan [ip] [port] [lanip] -lib <name> [mem val]` | scan a lib; `-lib` uses db-known-first logic; add `mem val` to force a pair |
+| `scanlan [ip] [port] [-c] [-l]` | scan/attack whatever's bound to an ip:port (`-l` local, `-c` accept computers) |
+| `scanlib <name> [lanip] [-c]` | scan/attack a **named** lib on the held shell's target; loaded lib lands in `globals.activeLib` |
+| `grab [ip] [port] [mem val] [inject] [-c] [-push]` | overflow to grab a shell/computer |
+| `exploit [ip] [port] [-c]` | interactive candidate picker |
+| `report` | exploit report — see note below |
+| `getroot` | escalate using a known password |
+| `autoroot [-l]` | ChainSaw password cracker (`-l` local) |
+| `ar [-l]` | dictionary attack via rainbow table (`-l` local) |
+| `enum [-l] [-r]` | full filesystem dump |
+| `harvest` | crack Mail.txt / Bank.txt / `/etc/passwd` (`harvest \| clip @b`) |
+| `peek [--stack]` | like harvest but **no cracking** — raw `user:hash` pairs (e.g. `peek \| clip @a \| decipher`) |
+| `siphon [-a/-b/-m/-p/-l/-n]` | network-wide harvest |
+| `wifi` | scan + crack nearby WiFi |
+| `sniff [-e]` | passively capture SSH/FTP creds on the current device — **closes the session when it catches one** |
+| `smtplist <ip> <port>` | list every username+email on a mail service (reduces attack to password-only) |
+| `wstack [-l] [libname]` | bounce the LAN, push **root computers** to the stack (see note) |
+| `wstackall [-l] [libname]` | same, but also keeps guest-level bounces |
+| `cascade [libname]` | run `wstack`'s remote mode from every shell on the stack |
+| `pwnlan` | exploit all LAN devices |
+| `crack [hash]` | crack a single hash |
+| `buildrt [order] [min] [max]` | build the rainbow table in memory |
+| `rtgen` | build + write the rainbow table to disk (learns slow-deciphered hashes into `learned.txt`) |
+| `plant [lib…] [-d dest] [-m [path]] [--stack] [-ls]` | upload weaklib(s) from `/root/InsecureLibs` (+ always metaxploit.so) |
+| `getlogs <sitelistfile> [destfolder]` | bulk site-list auto-exploiter → downloads `/var/system.log` from each rooted host |
+| `rshell` | reverse-shell server — see note |
+| `chainsaw run\|load\|deploy` | Markov/pregen password cracker |
+| `upgrade [-u]` / `updatelib` | check/install local lib updates |
+| `reset` | clear in-session `scanlan`/`report` caches (not the rainbow table/clips/aliases) |
+
+<details>
+<summary><b>report</b> — details</summary>
+
+- `report [ip] [port]` — live-tests **every** candidate for the bound lib+version (not just the first hit like scan/grab), printing `Hooked: <user> <type>` per working one and logging all to db.txt. Known candidates skip the scan/decode step; only a genuinely new lib+version pays for a full scan.
+- `report` or `report [libname] [version]` — prints from db.txt with **zero** live scanning (most-recent or a named lib+version).
+- Add `-v` to any form for a `MEMORY VULNER TYPE USER` aligned table.
+</details>
+
+<details>
+<summary><b>wstack</b> — details</summary>
+
+- **No `-l`:** uploads + launches on the held shell so you don't have to jump first. This is more than convenience — `get_router(ip)`/`devices_lan_ip` from *outside* a network returns a far more limited view (one address per subnet) than running *inside* it.
+- **`-l`:** run inline instead (you must already be on that LAN).
+- No libname: uses `globals.activeLib` if claimed/loaded, else `init.so`/`libhttp.so`. Whatever lib actually gets used lands back in `globals.activeLib`.
+- Tries every candidate per device, pushing a device only once a **root** computer bounce lands (a guest-only hit is discarded). `wstackall` keeps guest-level bounces instead.
+</details>
+
+<details>
+<summary><b>rshell</b> — details</summary>
+
+- `rshell init [-l] [port]` — install the server on the held remote shell, or `-l` to install on wherever phantom is physically running (e.g. right after `jump`).
+- `rshell all [cmd…]` — catch connections, then run `cmd` against **every** shell that connected. `cmd` can be a `;`-separated pipeline (e.g. `grab ip port ; push`), stop-on-fail per shell. `;` (not `|`) is deliberate, to dodge a GreyScript `split()` quirk. No `@var`/`@o` substitution inside it.
+</details>
 
 ### Remote (act on the held object)
-`rls`, `rtree`, `rcd`, `rcat`, `rcp`, `rmv`, `rrm`, `rmkdir`, `rtouch`, `rchmod`, `rchown`, `rchgrp`, `rsearch`, `rps`, `rkill`, `rpasswd`, `ruseradd`, `ruserdel`, `rcorlog` (`-y` to auto-confirm corrupting the remote system.log instead of prompting), `rterminal`, `rdecipher`, `rgrep`, `rfind`, `profile [opt:-w] [opt:-p <path>]` (writes a plain-text recon profile for the held target — hostname/ip, access level, cached lib+vuln info if scanned via `scanlan`, key file permissions; prints always, `-w` also saves it to `reports/<hostname>.txt`, `-p <path>` for a custom path), `term`, `mail`, `b` (browser), `file` (file explorer), `rterm`/`rb`/`rfile` (remote equivalents of `term`/`b`/`file` — launch Terminal.exe/Browser.exe/FileExplorer.exe on the *held remote shell* instead of locally; error if nothing's held)
+
+| Command | Description |
+|---|---|
+| `rls` `rtree` `rcd` `rcat` | remote browsing |
+| `rcp` `rmv` `rrm` `rmkdir` `rtouch` | remote file ops |
+| `rchmod` `rchown` `rchgrp` | remote permissions |
+| `rsearch` `rgrep` `rfind` | remote search |
+| `rps` `rkill` | remote processes |
+| `rpasswd` `ruseradd` `ruserdel` | remote users |
+| `rwhoami` | current user on the held remote shell |
+| `rcorlog [-y]` | corrupt the remote system.log (`-y` auto-confirms) |
+| `rterminal` | open a terminal on the remote machine |
+| `rdecipher [-h user:hash] [-f /path]` | crack hashes on the held remote object |
+| `profile [-w] [-p <path>]` | plain-text recon profile of the held target (`-w` saves to `reports/<hostname>.txt`) |
+| `term` `mail` `b` `file` | launch Terminal/Mail/Browser/FileExplorer **locally** |
+| `rterm` `rb` `rfile` | launch Terminal/Browser/FileExplorer on the **held remote shell** |
 
 ### Stack
-`push`, `pop`, `stack`, `swap`, `stackrun` (`stackrun help` for its file-op submodes, including `find <pattern> [path]` — runs `rfind` across every object on the stack and clip-captures the combined results via a trailing `@var`; also `harvest`/`peek` — same Mail.txt/Bank.txt walk as the top-level commands, cracked vs. raw respectively, each clip-capturing to `@harvested`/`@peeked` — and `ps`, feeding `psgrep`), `stackpick <condition>` (jumps to the first stack object matching any [macro condition](MACROS.md) — e.g. `stackpick computer`, `stackpick shell == root`), `stackfor <condition> | <command>` (same condition matching, but runs `<command>` against *every* matching object instead of just the first — e.g. `stackfor computer | corlog`, `stackfor shell == root | harvest`), `stacktree` (caches its results in `gco.treeResults`; `treelen`/`treeclear` are small debug commands for inspecting/clearing that cache, same spirit as `activelib`/`libdebug`), `stacklog`, `stackgrep`, `stackfind`, `astack`, `autoharvest`, `harvestgrep`, `psgrep`, `treegrep`
 
-### Variables, scripting & misc
-`clip`, `inc`, `dec`, `math`, `alias`, `ask`, `echo`, `log`, `write` (appends the pipe's result to a file, one entry per line, e.g. `foreach @b | harvest | write creds.txt`; `-l` instead prints the file back numbered, no write), `append` (replaces one specific line — by the number `write <file> -l` showed you — e.g. `append creds.txt -l 3 -t user:realpass`; `-t`'s text can be a clip like `@fix` too), `foreach`, `mac`, `call`/`macall`, `exec`, `code`, `plantstack` (thin alias for `plant --stack` — kept for backward compatibility), `harveststack`, `peekstack` (`peek`'s stack-wide form, same root-only gating as `harveststack`), `corlogstack`, `loot [opt:-c] [opt:-p]` (runs `harveststack` across the whole object stack; `-c` also runs `corlogstack` — destructive, off by default — and `-p` also runs `plantstack`, off by default since it only does anything on shell-type objects), `siphon`, `rlan`, `rpub`, `ports` (checks a port list against one ip, or every ip in a comma list — e.g. straight from `randip 10`), `p`, `pre`, `sleep`, `pause`, `exit`/`quit`, `imap` (target info), `uselib` (try overflow with `globals.activeLib`, scanning with `globals.activeMx` if one's held, printing which lib+version it's using — `-s` for recon-only: decode + record candidates to `db.txt` without attacking; `-l lanip` to bounce onto a LAN device; `-c` for computer-only (rejects a shell result instead of accepting it too); `-a` to try every candidate and push every match to the stack instead of stopping at the first — see `claim`)
+| Command | Description |
+|---|---|
+| `push` `pop` `stack` `swap` | juggle held objects |
+| `stackpick <condition>` | jump to the first stack object matching a [macro condition](MACROS.md) (e.g. `stackpick shell == root`) |
+| `stackfor <condition> \| <command>` | run `<command>` against **every** matching object |
+| `stackrun <mode>` | run a file-op across the stack (`stackrun help`); includes `find` / `harvest` / `peek` / `ps` |
+| `stacktree` | file tree per stack object (cached in `gco.treeResults`; `treelen`/`treeclear` inspect/clear) |
+| `stacklog` `stackgrep` `stackfind` | log / search across the stack |
+| `astack` | dictionary attack across the stack |
+| `autoharvest` | auto proxy-hop + harvest |
+| `harvestgrep` `psgrep` `treegrep` | grep harvested creds / process lists / cached trees |
+
+### Variables & scripting
+
+| Command | Description |
+|---|---|
+| `clip` | set/list/clear clip variables |
+| `inc` `dec` `math` | arithmetic on clips |
+| `alias` | define/remove command aliases |
+| `ask` | prompt for input into a clip |
+| `echo` `log` | print / append a line to a file |
+| `write <file> [-l]` | append the pipe result one-per-line (`-l` prints the file back numbered) |
+| `append <file> -l <n> -t <text>` | replace one specific line (number from `write -l`) |
+| `foreach @list \| cmd @each` | run a pipeline per list item |
+| `mac` `call` / `macall` `exec` | run macros / functions |
+| `code` | launch the in-game code editor |
+| `harveststack` `peekstack` `corlogstack` | stack-wide harvest / peek / corlog |
+| `plantstack` | alias for `plant --stack` |
+| `loot [-c] [-p]` | `harveststack` across the stack; `-c` also corlogstack (destructive), `-p` also plantstack |
+| `rlan` `rpub` | held object's LAN / public ip |
+| `p` `pre` | police records / session setup |
+| `sleep N` `pause` | wait N seconds / wait for Enter |
+| `exit` / `quit` | leave phantom (carries activeLib/activeMx home from a nested session) |
+| `imap` | target info |
 
 ### Misc
-`game` — BREACH, a hacking minigame collection. Bare `game` runs the combat mode: each round shows a dossier and four candidate commands with short descriptions — figure out which one actually fits the situation, then type it exactly (no partial credit). Picking the wrong tool, or mistyping the right one, costs one of 3 lives per ASCII-art enemy. `game story` runs a short branching infiltration instead — no options shown this time, just a situation and a vague hint; what you type decides which of several endings you get, and the node/branch/ending data is written to be easy to extend with more forks later. Type `!quit` at any prompt to jack out early. Purely for fun — doesn't touch any real target/state.
 
-`modules` — lists whatever plugin modules loaded at startup and how many commands each contributed. See "Plugin modules" below for what a module actually is.
+| Command | Description |
+|---|---|
+| `game` / `game story` | **BREACH** — a hacking minigame (combat or branching story). `!quit` to exit. Purely for fun, touches no real state. |
+| `modules` | list loaded plugin modules and their command counts |
+| `monitor` / `top` `[-i secs] [-n count]` | htop-style open-port + process dashboard (held object, else local). Process/port state only — GreyScript exposes no live CPU/RAM. |
+| `./name` | launch a local binary |
+| `r./name` | launch a binary on the held remote shell |
 
-`monitor`/`top` (`[opt: -i seconds] [opt: -n count]`) — top/htop-style auto-refreshing dashboard: open-port count + process list, redrawn every `-i` seconds (default 2) until ctrl+c or the optional `-n` refresh cap is hit. Watches the held object if one's active, else the local machine — GreyScript exposes no live CPU/RAM telemetry, so this is process/port state only, not a resource-usage graph.
-
-`./name` launches a local binary; `r./name` launches one on the held remote shell.
+---
 
 ## Plugin modules
 
-Optional third-party commands, loaded without touching any of phantom's own topic files or `phantom.src`'s hardcoded `import_code` list. At startup phantom looks for `/root/ai/pt/modules/*.cfg`; each one names a **pre-compiled binary** that gets `launch()`'d (not `import_code`'d — `launch()` accepts a path computed at runtime, which is exactly what `import_code` can't do). The launched binary is expected to write its exports into the custom object before it exits, using the same `gco` launch-boundary carry `jump --loadlib` already relies on.
+Optional third-party commands, loaded without touching phantom's topic files or `phantom.src`'s `import_code` list. At startup phantom looks for `/root/ai/pt/modules/*.cfg`; each names a **pre-compiled binary** that gets `launch()`'d (not `import_code`'d — `launch()` accepts a runtime-computed path, which `import_code` can't). The binary writes its exports into the custom object before it exits.
 
-A `.cfg` is plain `key=value` lines:
-```
+A `.cfg` is plain `key=value`:
+
+```ini
 module_name=hello
 binary_path=/root/ai/pt/modules/hello
 init=Init
 ```
-`module_name`/`binary_path` are required; `init` (optional) names a function in the module's own export table to run once at load time — it should return `true` on success or a `string` to report as a load error (phantom prints it and skips that module's commands, without crashing the rest of startup).
 
-**`binary_path` is a per-install setting, same caveat as the `import_code` lines in `phantom.src`.** It has to match wherever *you* actually put phantom, not necessarily `/root/ai/pt/` — if your install lives somewhere else (this repo's own dev instance runs from `/root/ai/tp/`, for example), every `.cfg`'s `binary_path` needs to point there too, or the loader silently skips that module (prints a "binary not found" warning, doesn't crash) and it never shows up in `modules`.
+`module_name` / `binary_path` are required; `init` (optional) names an export-table function run once at load — return `true` on success, or a `string` to report as a load error (phantom prints it and skips that module's commands without crashing startup).
 
-The module's source, once built to the binary path above, needs to end with something like:
-```
+> **`binary_path` is per-install** — same caveat as the `import_code` lines. It must match wherever *you* put phantom. If it's wrong, the loader skips that module with a "binary not found" warning (no crash) and it never shows in `modules`.
+
+A module's source, built to the binary path, ends with:
+
+```greyscript
 CmdHello = function(inp)
     print("hello from a loaded module!")
 end function
@@ -133,29 +427,44 @@ end function
 gco = get_custom_object
 gco.modules["hello"] = {"commands": {"hello": @CmdHello}, "Init": @Init}
 ```
-**Two different scopes are in play here, and it matters which code runs when.** The module's own top-level script — the part that runs once, standalone, when phantom `launch()`s it to register its exports — is a genuinely separate script with no access to phantom's globals (no `c`, no `myShell`/`myComp`/`object`, nothing but what `get_custom_object` gives it). But the *command functions* it hands back — anything under `commands` in `gco.modules[module_name]` — get merged straight into `CommandTable` and behave like fully native phantom commands once actually invoked: they run with full access to `object`, `myShell`, `myComp`, `c`, `activeLib`, everything (confirmed empirically with `modules/jumptest.src`, which reads `globals.object` from inside a registered command and successfully builds/runs code against the currently held remote shell). So: no phantom globals while the module is setting itself up, full phantom globals once its commands are actually running. A name collision with an existing command is skipped with a warning, not silently overwritten. See `modules/hello.src` + `modules/hello.cfg` for the minimal example, or `modules/jumptest.src` for one that actually touches a held remote target — build either `.src` to produce its binary before testing it.
 
-## Payload scripts (`payloads/`)
+**Two scopes matter here:**
+- The module's **top-level script** (runs once, standalone, when `launch()`'d to register exports) has **no** phantom globals — only what `get_custom_object` gives it.
+- Its **command functions** (under `commands`) get merged into `CommandTable` and, once invoked, run with full native access — `object`, `myShell`, `myComp`, `c`, `activeLib`, everything.
 
-These get uploaded and run *on a target*, not imported at startup:
+A name collision with an existing command is skipped with a warning, not overwritten. See `modules/hello.src` + `.cfg` for the minimal example, or `modules/jumptest.src` for one that touches a held remote target.
 
-- **`slb.src`** — LAN-bounce scanner used by `scanlan` against LAN ips: nets into a target from inside its own segment, checks known db exploits first, then falls back to a full scan.
-- **`libscan.src`** — used by `scanlib`: loads a named lib directly from wherever it's launched (no `net_use` needed), same known-db-first shortcut, with an optional LAN-ip inject to bounce onward.
-- **`wsx.src`** — used by `wstack`'s remote mode: discovers the LAN itself (one nested launch instead of the old separate `enum_lan.src` round trip) and bounces a chosen (or default weak) lib against every device found, hands the loaded lib itself back via `gco.wsLibObj` so `WStack` can drop it into `globals.activeLib`, and accepts a live lib/mx handle from the caller (`gco.wsUseLib`/`gco.wsUseMx`) to scan/bounce with instead of reloading fresh from its own `/lib`. This mode was briefly dropped in favor of running `wstack` inline everywhere, then restored — turned out LAN visibility itself (not just the bounce) needs to run from inside the target network, not just convenience.
-- **`netmap.src`** — pure recon LAN mapper (`netmap` command): open ports, kernel/firewall info per device, no attacking.
-- **`getlogs.src`** — the *original*, standalone site-list log-puller. Not wired to any command and depends on an external `/root/ja/db/remote_service` exploit list this codebase doesn't provide — kept around for reference, but superseded by the `getlogs` command below, which needs no upload/build step and runs entirely off phantom's own `db.txt`.
+---
 
-## Persisted files (auto-created next to phantom's files)
+## Payload scripts
+
+Uploaded and run **on a target**, not imported at startup:
+
+| Script | Used by | Purpose |
+|---|---|---|
+| `slb.src` | `scanlan` | LAN-bounce scanner — nets in from inside the segment, db-known-first then full scan |
+| `libscan.src` | `scanlib` | loads a named lib directly where launched (no `net_use`), with optional LAN-ip inject |
+| `wsx.src` | `wstack` remote mode | discovers the LAN itself and bounces a lib against every device; hands the loaded lib back via `gco.wsLibObj`; accepts a caller lib/mx handle (`gco.wsUseLib`/`gco.wsUseMx`) |
+| `netmap.src` | `netmap` | pure recon LAN mapper — open ports, kernel/firewall info, no attacking |
+| `getlogs.src` | *(reference only)* | the original standalone site-list log-puller; superseded by the `getlogs` command (which runs off `db.txt`, no upload) |
+
+---
+
+## Persisted files
+
+Auto-created next to phantom's files:
 
 | File | Purpose |
 |---|---|
-| `db.txt` | Exploit database — lib, version, mem, val, result type, user context for every attempt ever made. |
-| `deadlibs.txt` | Lib+version combos confirmed to have zero exploitable vulnerabilities — skips the scan/decode pass next time. |
+| `db.txt` | Exploit database — lib, version, mem, val, result type, user context for every attempt. |
+| `deadlibs.txt` | Lib+version combos with zero exploitable vulns — skips the scan/decode pass next time. |
 | `aliases.txt` | Persisted `alias` definitions. |
-| `sshportals.txt` | Saved SSH logins for your own machines (`sshsave`/`sshlist`/`sshdel`) — name, user, pass, ip, port per line. |
+| `sshportals.txt` | Saved SSH logins (`sshsave`/`sshlist`/`sshdel`) — name, user, pass, ip, port per line. |
 
-## Notes
+---
 
-- `wstack`/`slb`/`libscan`/`netmap` all upload a compiled binary to the target and leave it in `/home/guest` afterward for reuse — there's no cleanup command yet, so treat any pivoted-through host as "dirty." (`wstack -l` is the exception — local mode runs entirely inline, nothing gets uploaded.)
-- GreyScript's `import_code` can't take a dynamically computed path, which rules out a true drop-in plugin folder *for the core topic files* — every one of those has to be a literal `import_code(...)` line in `phantom.src`. Optional third-party commands don't have that restriction, though — see "Plugin modules" below, which sidesteps `import_code` entirely by using `launch()` (which *does* accept a computed path) plus the same `gco` launch-boundary carry `jump --loadlib` already relies on.
-- Grey Hack caps a single script file at 160,000 characters. `ops.src` had grown close to that ceiling since most commands historically landed there; as of 2026-07-10 its `r*` remote-object commands (`rls`/`rcd`/`rcat`/etc.) moved to `remote.src` to free headroom, and `ssh`/`sshsave`/`sshlist`/`sshdel` followed the same move for the same reason (`ops.src` ~150k, `remote.src` ~69k). New commands should go in `chainsaw.src` (still the smallest topic file by far, ~8k) unless they genuinely belong with something already in `ops.src`. `hack.src`/`macro.src`/`stack.src` absorbed former `core.src`/`misc.src`/`vars.src` respectively to shrink the install down to fewer files, so they have less spare headroom than their size alone suggests — check current size (`wc -c`) before adding non-trivial code to any of them.
+## Development notes
+
+- **Uploaded binaries aren't cleaned up.** `wstack`/`slb`/`libscan`/`netmap` leave a compiled binary in `/home/guest` on the target for reuse — treat any pivoted host as "dirty." (`wstack -l` is the exception — inline, nothing uploaded.)
+- **No true plugin folder for core files.** `import_code` can't take a computed path, so each core topic file must be a literal line in `phantom.src`. Optional commands sidestep this via `launch()` — see [Plugin modules](#plugin-modules).
+- **160,000-char file cap.** Grey Hack caps a single script at 160k chars. `ops.src` grew near that, so its `r*` commands moved to `remote.src`, and `ssh`/`sshsave`/`sshlist`/`sshdel` followed. New commands should go in `chainsaw.src` (smallest topic file) unless they clearly belong with something in `ops.src`. `hack.src`/`macro.src`/`stack.src` absorbed former files, so they have less headroom than their size suggests — check `wc -c` before adding non-trivial code.
