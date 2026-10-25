@@ -1,0 +1,117 @@
+// netmap.src — standalone LAN recon, runs ON the held machine
+// Build: build /root/ai/tp/netmap.src /root/ai/tp
+//
+// Recon only, no attacking — matches how established toolkits keep
+// network-mapping fast (Plu70's who_scan/probe, Viper's nmap): pure
+// metadata (devices_lan_ip, device_ports, port_info), never net_use/
+// scan/overflow. Use scanlan/grab on a specific device from the
+// results if you want to actually attack it.
+//
+// Results go back through gco:
+//   gco.netmapDevices — list of {ip, ports:[{num,state,service}]}
+//   gco.netmapKernel / netmapFirewall / netmapPubIp — this router's own info
+//   gco.netmapDebug — status line
+
+gco = get_custom_object
+
+gco.netmapDevices  = []
+gco.netmapDebug    = "did not run"
+gco.netmapKernel   = ""
+gco.netmapFirewall = ""
+gco.netmapPubIp    = ""
+
+myShell2 = get_shell
+rcomp = myShell2.host_computer
+pubIp = rcomp.public_ip
+gco.netmapPubIp = pubIp
+
+router = get_router(pubIp)
+if not router then router = get_router(rcomp.local_ip)
+if not router then
+    gco.netmapDebug = "could not reach own router"
+    exit
+end if
+
+gco.netmapKernel   = router.kernel_version
+gco.netmapFirewall = router.firewall_rules
+
+// recursive device discovery — same walk NetMap always used
+deviceList = []
+getDevicesNM = function(r)
+    if r == null then return
+    ip = r.local_ip
+    if deviceList.indexOf(ip) == null then deviceList.push(ip)
+    devices = r.devices_lan_ip
+    if not devices then return
+    for device in devices
+        if device == ip then continue
+        if deviceList.indexOf(device) != null then continue
+        subRouter = get_router(device)
+        subSwitch = get_switch(device)
+        if subRouter then
+            deviceList.push(device)
+            getDevicesNM(subRouter)
+        else if subSwitch then
+            deviceList.push(device)
+            getDevicesNM(subSwitch)
+        else
+            deviceList.push(device)
+        end if
+    end for
+end function
+getDevicesNM(router)
+
+// fill gaps
+gapList = []
+for existingIp in deviceList
+    parts = existingIp.split("\\.")
+    if parts.len < 4 then continue
+    subnet = parts[0] + "." + parts[1] + "." + parts[2] + "."
+    lastOctet = parts[3].to_int
+    i = 1
+    while i < lastOctet
+        candidate = subnet + i
+        if deviceList.indexOf(candidate) == null and gapList.indexOf(candidate) == null then
+            gapList.push(candidate)
+        end if
+        i = i + 1
+    end while
+end for
+for gapIp in gapList
+    deviceList.push(gapIp)
+end for
+
+for lanIp in deviceList
+    entry = {}
+    entry.ip = lanIp
+    entry.ports = []
+
+    devRouter = get_router(lanIp)
+    if not devRouter then devRouter = router
+    ports = devRouter.device_ports(lanIp)
+    // device_ports returns a STRING (not null, not an empty list) when
+    // the device is firewalled
+    if typeof(ports) == "string" then
+        entry.firewalled = true
+        gco.netmapDevices.push(entry)
+        continue
+    end if
+    entry.firewalled = false
+    if not ports or ports.len == 0 then
+        gco.netmapDevices.push(entry)
+        continue
+    end if
+
+    for p in ports
+        pinfo = {}
+        pinfo.num = p.port_number
+        pinfo.state = "open"
+        if p.is_closed then pinfo.state = "closed"
+        pinfo.service = devRouter.port_info(p)
+        entry.ports.push(pinfo)
+    end for
+
+    gco.netmapDevices.push(entry)
+end for
+
+gco.netmapDebug = "done — " + gco.netmapDevices.len + " device(s)"
