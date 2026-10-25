@@ -1,0 +1,244 @@
+// libscan.src — named-lib scanner + optional bounce-inject
+// Build: build /root/ai/tp/libscan.src /root/ai/tp
+//
+// gco.lsLib    — required, lib filename to load (e.g. "libhttp.so")
+// gco.lsInject — optional, lan-ip to use as overflow's 3rd arg (bounce
+//                to that device); blank/missing means a plain 2-arg
+//                overflow attempt on this machine itself
+// gco.edb / gco.deadLibs — same db.txt/dead-lib data slb.src already uses
+//
+// Runs entirely on the machine this script is launched on — loads the
+// named lib directly from ITS OWN /lib, no net_use() involved. Lets you
+// scan/attack any lib on a held remote target by name, not just
+// whatever happens to be listening on a specific port (that's
+// scanlan/slb.src's job).
+//
+// Results:
+//   gco.lsResults / gco.lsCount           — every candidate tried, mem/val/outcome
+//   gco.lsObj / lsObjType / lsMem / lsVal — first working exploit, if any
+//   gco.lsLibObj                          — the loaded lib itself (live
+//                                            handle), regardless of
+//                                            whether overflow ever
+//                                            succeeded — lets the caller
+//                                            (LibScan, hack.src) drop it
+//                                            straight into
+//                                            globals.activeLib, same
+//                                            as loadlib does locally
+
+gco = get_custom_object
+
+gco.lsLibObj  = null
+gco.lsObj     = null
+gco.lsObjType = ""
+gco.lsMem     = ""
+gco.lsVal     = ""
+gco.lsResults = null
+gco.lsCount   = 0
+gco.lsPatched = 0
+gco.lsLibName = ""
+gco.lsLibVer  = ""
+gco.lsDebug   = "script did not run"
+gco.lsDone    = false
+gco.lsDeadLib = false
+gco.lsUserCtx = ""
+// tracked independently of gco.lsObj — a computer found before a later
+// shell shouldn't just be discarded when the shell (rightly) takes over
+// as the primary result; the caller can still push both with -c
+gco.lsCompObj = null
+gco.lsCompMem = ""
+gco.lsCompVal = ""
+
+// mirrors ops.src's GetUserCtx — can't call it directly, this is a
+// standalone script with its own scope, no access to phantom's helpers
+GetUserCtx = function(obj)
+    if typeof(obj) != "shell" and typeof(obj) != "computer" then return ""
+    rhost = obj
+    if typeof(obj) == "shell" then rhost = obj.host_computer
+    f = rhost.File("/etc/passwd")
+    if not f then return ""
+    if f.has_permission("w") then return "root" else return "guest"
+end function
+
+mx = include_lib(program_path.split("/")[:-1].join("/") + "/metaxploit.so")
+if not mx then mx = include_lib("/lib/metaxploit.so")
+if not mx then
+    gco.lsDebug = "no metaxploit"
+    gco.lsDone = true
+    exit
+end if
+
+if not gco.hasIndex("lsLib") or not gco.lsLib or gco.lsLib == "" then
+    gco.lsDebug = "no lib specified"
+    gco.lsDone = true
+    exit
+end if
+
+injectVal = null
+if gco.hasIndex("lsInject") and gco.lsInject and gco.lsInject != "" then injectVal = gco.lsInject
+
+libPath = gco.lsLib
+if libPath[0] != "/" then libPath = "/lib/" + libPath
+ml = mx.load(libPath)
+if not ml then ml = mx.load(gco.lsLib)
+if not ml then
+    gco.lsDebug = "lib not found: " + gco.lsLib
+    gco.lsDone = true
+    exit
+end if
+
+gco.lsLibObj  = ml
+gco.lsLibName = ml.lib_name
+gco.lsLibVer  = ml.version
+gco.lsDebug   = "lib: " + ml.lib_name + " " + ml.version
+
+// gco.edb is plain data handed in by the caller (see LibScan in
+// hack.src) — db.txt-known mem/val pairs for this exact lib+version,
+// same shortcut ScanLan/grab already get. Try these directly before
+// the slow mx.scan()/scan_address() decode pass.
+knownPairs = []
+if gco.hasIndex("edb") and gco.edb then
+    for e in gco.edb
+        exVer = ""
+        if e.hasIndex("ver") then exVer = e["ver"]
+        if e["lib"] == ml.lib_name and exVer == ml.version then
+            knownPairs.push([e["mem"], e["val"]])
+        end if
+    end for
+end if
+
+if knownPairs.len > 0 then
+    gco.lsDebug = gco.lsDebug + " — " + knownPairs.len + " known db entr(ies), trying direct"
+    knownResults = []
+    for pair in knownPairs
+        mem = pair[0]
+        val = pair[1]
+        // "skipped" (not "null") when we already have BOTH a shell and
+        // a computer from earlier pairs in this same loop — nothing
+        // left to gain, never actually attempted, must not be recorded
+        // as a confirmed dud. Stopping on shell alone (as this used to)
+        // meant a computer later in iteration order never even got
+        // tried — keep going until there's genuinely nothing more to find.
+        outcome = "skipped"
+        if not (gco.lsObjType == "shell" and gco.lsCompObj) then
+            if injectVal then obj = ml.overflow(mem, val, injectVal) else obj = ml.overflow(mem, val)
+            t = typeof(obj)
+            outcome = t
+            if t == "shell" then
+                gco.lsObj     = obj
+                gco.lsObjType = t
+                gco.lsMem     = mem
+                gco.lsVal     = val
+            else if t == "computer" then
+                // independent track — a shell found later must not
+                // erase this; not(gco.lsObj) still picks it as the
+                // primary result if nothing better ever turns up
+                if not gco.lsCompObj then
+                    gco.lsCompObj = obj
+                    gco.lsCompMem = mem
+                    gco.lsCompVal = val
+                end if
+                if not gco.lsObj then
+                    gco.lsObj     = obj
+                    gco.lsObjType = t
+                    gco.lsMem     = mem
+                    gco.lsVal     = val
+                end if
+            end if
+            // exploratory: haven't confirmed what typeof() returns for a
+            // firewall-disable side-effect exploit — flag it via
+            // lsDebug (print() here never reaches the player, this
+            // runs on the remote target)
+            if t == "firewall" then gco.lsDebug = gco.lsDebug + " [FIREWALL TYPE: " + mem + " " + val + "]"
+        end if
+        knownResults.push(mem + char(3) + val + char(3) + outcome)
+    end for
+    if gco.lsObj then
+        // matches grab/slb's own edb-hit behavior — a known entry paid
+        // off, done, no need for the slow scan/decode pass at all
+        gco.lsResults = knownResults.join(char(2))
+        gco.lsCount   = knownResults.len
+        gco.lsUserCtx = GetUserCtx(gco.lsObj)
+        gco.lsDebug   = gco.lsDebug + " — got " + gco.lsObjType + " via known db entry " + gco.lsMem + " " + gco.lsVal
+        gco.lsDone    = true
+        exit
+    end if
+    // known entries didn't pan out — fall through to the full scan
+    // below instead of giving up, same as grab/slb's fallback
+    gco.lsDebug = gco.lsDebug + " — known entries didn't pan out, falling back to full scan"
+end if
+
+if ml.is_patched then
+    gco.lsPatched = 1
+    gco.lsDebug   = gco.lsDebug + " [patched]"
+    gco.lsDeadLib = true
+    gco.lsDone = true
+    exit
+end if
+
+mems = mx.scan(ml)
+if not mems then
+    gco.lsDebug = gco.lsDebug + " — no mems"
+    gco.lsDeadLib = true
+    gco.lsDone = true
+    exit
+end if
+
+gco.lsDebug = gco.lsDebug + " — " + mems.len + " mem(s)"
+
+results = []
+for mem in mems
+    // stop only once there's genuinely nothing left to gain (both a
+    // shell AND a computer already found) — stopping on shell alone
+    // meant a computer later in scan order never even got attempted.
+    // scan_address is still not free, so this isn't free completeness,
+    // but a missed computer is worse than the extra decode cost here.
+    if gco.lsObjType == "shell" and gco.lsCompObj then break
+    raw = mx.scan_address(ml, mem)
+    addrs = raw.split("Unsafe check: ")
+    for addr in addrs
+        if gco.lsObjType == "shell" and gco.lsCompObj then break
+        if addr == addrs[0] then continue
+        p1 = addr.indexOf("<b>")
+        p2 = addr.indexOf("</b>")
+        if p1 == null or p2 == null then continue
+        val = addr[p1+3:p2]
+        if val == "" then continue
+
+        if injectVal then obj = ml.overflow(mem, val, injectVal) else obj = ml.overflow(mem, val)
+        t = typeof(obj)
+        results.push(mem + char(3) + val + char(3) + t)
+        if t == "shell" then
+            gco.lsObj     = obj
+            gco.lsObjType = t
+            gco.lsMem     = mem
+            gco.lsVal     = val
+        else if t == "computer" then
+            // independent track — a shell found later must not erase
+            // this; not(gco.lsObj) still picks it as the primary
+            // result if nothing better ever turns up
+            if not gco.lsCompObj then
+                gco.lsCompObj = obj
+                gco.lsCompMem = mem
+                gco.lsCompVal = val
+            end if
+            if not gco.lsObj then
+                gco.lsObj     = obj
+                gco.lsObjType = t
+                gco.lsMem     = mem
+                gco.lsVal     = val
+            end if
+        end if
+        if t == "firewall" then gco.lsDebug = gco.lsDebug + " [FIREWALL TYPE: " + mem + " " + val + "]"
+    end for
+end for
+
+gco.lsResults = results.join(char(2))
+gco.lsCount   = results.len
+if gco.lsObj then
+    gco.lsUserCtx = GetUserCtx(gco.lsObj)
+    gco.lsDebug = gco.lsDebug + " — " + results.len + " result(s) — got " + gco.lsObjType + " via " + gco.lsMem + " " + gco.lsVal
+else
+    gco.lsDebug = gco.lsDebug + " — " + results.len + " result(s) — no working exploit"
+    if results.len == 0 then gco.lsDeadLib = true
+end if
+gco.lsDone = true
