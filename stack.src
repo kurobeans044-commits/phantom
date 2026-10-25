@@ -1,0 +1,1422 @@
+// ================================================================
+//  stack.src  |  phantom module  |  object stack commands
+// ================================================================
+// Cmd* functions take the tokenized input array `inp` (inp[0] is
+// the command name itself, same convention as the old dispatcher).
+
+// ── push ─────────────────────────────────────────────────────────
+CmdPush = function(inp)
+    if not object then
+        print(c.yellow + "<b>push: no active object to push" + c.ennd)
+    else
+        objectStack.push(object)
+        print(c.green + "pushed object to stack  [" + objectStack.len + " in stack]" + c.ennd)
+        if typeof(object) == "shell" then
+            print(c.grey + "  " + object.host_computer.public_ip + "  " + object.host_computer.local_ip + c.ennd)
+        end if
+    end if
+end function
+CommandTable["push"] = @CmdPush
+
+// ── pop ──────────────────────────────────────────────────────────
+CmdPop = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>pop: stack is empty" + c.ennd)
+    else
+        globals.object = objectStack[-1]
+        globals.remotePath = "/"
+        print(c.green + "popped object from stack  [" + objectStack.len + " in stack]" + c.ennd)
+        GETPERMS(globals.object)
+    end if
+end function
+CommandTable["pop"] = @CmdPop
+
+// ── stack ────────────────────────────────────────────────────────
+CmdStack = function(inp)
+    if inp.len >= 2 and inp[1] == "-c" then
+        globals.objectStack = []
+        print(c.grey + "stack cleared" + c.ennd)
+    else if objectStack.len == 0 then
+        print(c.grey + "stack is empty" + c.ennd)
+    else
+        print(c.cyan + "<b>" + objectStack.len + " object(s) in stack:" + c.ennd)
+        i = 1
+        for obj in objectStack
+            if typeof(obj) == "shell" then
+                pub  = obj.host_computer.public_ip
+                lan  = obj.host_computer.local_ip
+                name = obj.host_computer.get_name
+                if IsRoot(obj) then
+                    priv = c.lime + "<b>ROOT</b>" + c.ennd
+                else
+                    priv = c.grey + "guest" + c.ennd
+                end if
+                print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>shell</b>" + c.ennd + "  " + priv + "  " + name + "  pub:" + c.cyan + pub + c.ennd + "  lan:" + c.cyan + lan + c.ennd)
+            else if typeof(obj) == "computer" then
+                pub  = obj.public_ip
+                lan  = obj.local_ip
+                name = obj.get_name
+                // IsRoot hardcodes typeof(x)=="shell" and always returns
+                // false otherwise — GetUserCtx handles computers too
+                if GetUserCtx(obj) == "root" then
+                    priv = c.lime + "<b>ROOT</b>" + c.ennd
+                else
+                    priv = c.grey + "guest" + c.ennd
+                end if
+                print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>computer</b>" + c.ennd + "  " + priv + "  " + name + "  pub:" + c.cyan + pub + c.ennd + "  lan:" + c.cyan + lan + c.ennd)
+            else
+                print(c.gold + "  [" + i + "] " + c.ennd + typeof(obj) + c.ennd)
+            end if
+            i = i + 1
+        end for
+        // lets "stack | clip @b" capture the current stack as a named,
+        // reusable object-list — clip checks this before its normal
+        // string-pipeResult path (see CmdClip, vars.src)
+        globals.pipeObjResult = objectStack[:]
+    end if
+end function
+CommandTable["stack"] = @CmdStack
+
+// ── swap ─────────────────────────────────────────────────────────
+CmdSwap = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>swap: stack is empty" + c.ennd)
+    else if inp.len == 2 then
+        idx = inp[1].to_int - 1
+        if typeof(idx) != "number" or idx < 0 or idx >= objectStack.len then
+            print(c.yellow + "<b>swap: invalid index" + c.ennd)
+        else
+            prev = object
+            globals.object = objectStack[idx]
+            objectStack[idx] = prev
+            globals.remotePath = "/"
+            print(c.green + "swapped to stack [" + (idx+1) + "]" + c.ennd)
+            GETPERMS(globals.object)
+        end if
+    else
+        if not object then
+            globals.object = objectStack.pop
+        else
+            prev = object
+            globals.object = objectStack.pop
+            objectStack.push(prev)
+        end if
+        globals.remotePath = "/"
+        print(c.green + "swapped with top of stack" + c.ennd)
+        GETPERMS(globals.object)
+    end if
+end function
+CommandTable["swap"] = @CmdSwap
+
+// ── stackrun ─────────────────────────────────────────────────────
+CmdStackrun = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>stackrun: stack is empty" + c.ennd)
+    else if inp.len < 2 or inp[1] == "help" or inp[1] == "-h" then
+        print(c.cyan + "<b>stackrun - run an operation across every object in the stack" + c.ennd)
+        print(c.white + "<b>file ops (work on shell + computer objects):" + c.ennd)
+        print(c.grey + "  ls [path]                  list a folder (default /)" + c.ennd)
+        print(c.grey + "  tree [path] [depth]        recursive listing (default / depth 3)" + c.ennd)
+        print(c.grey + "  find <pattern> [path]      recursively find files/folders by name (default /)" + c.ennd)
+        print(c.grey + "  read <file>                print a file's contents" + c.ennd)
+        print(c.grey + "  write <file> <text...>     overwrite a file with text" + c.ennd)
+        print(c.grey + "  rm [-r] <path>             delete a file/folder" + c.ennd)
+        print(c.grey + "  mv <src> <destFolder>      move a file/folder" + c.ennd)
+        print(c.grey + "  cp <src> <destFolder>      copy a file/folder" + c.ennd)
+        print(c.grey + "  chmod <perms> <path>       change permissions (e.g. o-rwx)" + c.ennd)
+        print(c.grey + "  mkdir <path>               create a folder" + c.ennd)
+        print(c.grey + "  touch <path>               create an empty file" + c.ennd)
+        print(c.grey + "  perms <path>               show file permissions/owner" + c.ennd)
+        print(c.white + "<b>computer info ops:" + c.ennd)
+        print(c.grey + "  name                       hostname" + c.ennd)
+        print(c.grey + "  ports                      list open ports" + c.ennd)
+        print(c.grey + "  procs                      running processes" + c.ennd)
+        print(c.grey + "  users                      /home user folders" + c.ennd)
+        print(c.white + "<b>shell-only ops:" + c.ennd)
+        print(c.grey + "  plant [lib] [dest]         upload from /root/InsecureLibs to each (default: libhttp.so -> /lib)" + c.ennd)
+        print(c.grey + "  cmd <program> [args]       launch any program (output stays on target)" + c.ennd)
+        print(c.grey + "  launch <program> [args]    alias of cmd" + c.ennd)
+        print(c.white + "<b>credential/recon ops:" + c.ennd)
+        print(c.grey + "  harvest                    crack Mail.txt/Bank.txt/passwd creds via CrackHash, clip @harvested" + c.ennd)
+        print(c.grey + "  peek                       same walk as harvest, raw uncracked user:hash, clip @peeked" + c.ennd)
+        print(c.grey + "  ps                         process list per object, feeds psgrep" + c.ennd)
+    else
+        sub = inp[1]
+        i = 1
+        findResults = []
+        for obj in objectStack
+            if typeof(obj) == "shell" then
+                sComp = obj.host_computer
+            else if typeof(obj) == "computer" then
+                sComp = obj
+            else
+                i = i + 1
+                continue
+            end if
+            label = sComp.public_ip + "/" + sComp.local_ip
+            print(c.cyan + "<b>[" + i + "] " + label + c.ennd)
+
+            if sub == "plant" then
+                srcDir = "/root/InsecureLibs"
+                libName = "libhttp.so"
+                dest = "/home/guest"
+                if inp.len >= 3 then libName = inp[2]
+                if inp.len >= 4 then dest = inp[3]
+                srcPath = srcDir + "/" + libName
+                if not myComp.File(srcPath) then
+                    print(c.yellow + "  plant: " + srcPath + " not found — aborting" + c.ennd)
+                    break
+                end if
+                if typeof(obj) != "shell" then
+                    print(c.grey + "  (computer object - plant needs a shell; skipped)" + c.ennd)
+                else
+                    result = myShell.scp(srcPath, dest, obj)
+                    if result then
+                        print(c.yellow + "  plant failed: " + result + c.ennd)
+                    else
+                        print(c.lime + "  [+] planted " + libName + " at " + dest + "/" + libName + c.ennd)
+                    end if
+                end if
+
+            else if sub == "cmd" or sub == "launch" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing program path" + c.ennd)
+                else if typeof(obj) != "shell" then
+                    print(c.grey + "  (computer object - needs a shell; skipped)" + c.ennd)
+                else
+                    progPath = inp[2]
+                    progArgs = ""
+                    if inp.len > 3 then progArgs = inp[3:].join(" ")
+                    res = obj.launch(progPath, progArgs)
+                    if res == 1 then
+                        print(c.lime + "  " + progPath + " " + progArgs + c.ennd)
+                    else
+                        print(c.yellow + "  failed (" + str(res) + "): " + progPath + " - not found or not executable" + c.ennd)
+                    end if
+                end if
+
+            else if sub == "read" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing file path" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[2] + c.ennd)
+                    else if f.is_folder then
+                        print(c.grey + "  is a folder: " + inp[2] + c.ennd)
+                    else if not f.has_permission("r") then
+                        print(c.grey + "  no read perm: " + inp[2] + c.ennd)
+                    else
+                        content = f.get_content
+                        if content and content != "" then
+                            print(c.white + content + c.ennd)
+                        else
+                            print(c.grey + "  (empty)" + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "write" then
+                if inp.len < 4 then
+                    print(c.yellow + "  usage: write <file> <text...>" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        parts2 = inp[2].split("/")
+                        newName = parts2[-1]
+                        parent = inp[2][:inp[2].len - newName.len - 1]
+                        if parent == "" then parent = "/"
+                        sComp.touch(parent, newName)
+                        f = sComp.File(inp[2])
+                    end if
+                    if not f then
+                        print(c.yellow + "  could not create " + inp[2] + c.ennd)
+                    else
+                        res = f.set_content(inp[3:].join(" "))
+                        if res == null or res == "" then
+                            print(c.lime + "  wrote " + inp[2] + c.ennd)
+                        else
+                            print(c.yellow + "  write failed: " + res + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "rm" then
+                rmPath = ""
+                if inp.len >= 3 and inp[2] == "-r" then
+                    if inp.len >= 4 then rmPath = inp[3]
+                else if inp.len >= 3 then
+                    rmPath = inp[2]
+                end if
+                if rmPath == "" then
+                    print(c.yellow + "  missing path" + c.ennd)
+                else
+                    f = sComp.File(rmPath)
+                    if not f then
+                        print(c.grey + "  not found: " + rmPath + c.ennd)
+                    else
+                        res = f.delete
+                        if res == "" or res == null then
+                            print(c.lime + "  deleted " + rmPath + c.ennd)
+                        else
+                            print(c.yellow + "  rm failed: " + res + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "mv" then
+                if inp.len < 4 then
+                    print(c.yellow + "  usage: mv <src> <destFolder>" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[2] + c.ennd)
+                    else
+                        res = f.move(inp[3])
+                        if res == 1 or res == "" or res == null then
+                            print(c.lime + "  moved " + inp[2] + " -> " + inp[3] + c.ennd)
+                        else
+                            print(c.yellow + "  mv failed: " + str(res) + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "cp" then
+                if inp.len < 4 then
+                    print(c.yellow + "  usage: cp <src> <destFolder>" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[2] + c.ennd)
+                    else
+                        res = f.copy(inp[3])
+                        if res == 1 or res == "" or res == null then
+                            print(c.lime + "  copied " + inp[2] + " -> " + inp[3] + c.ennd)
+                        else
+                            print(c.yellow + "  cp failed: " + str(res) + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "chmod" then
+                if inp.len < 4 then
+                    print(c.yellow + "  usage: chmod <perms> <path>" + c.ennd)
+                else
+                    f = sComp.File(inp[3])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[3] + c.ennd)
+                    else
+                        res = f.chmod(inp[2])
+                        if res == "" or res == null then
+                            print(c.lime + "  chmod " + inp[2] + " " + inp[3] + c.ennd)
+                        else
+                            print(c.yellow + "  chmod failed: " + res + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "mkdir" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing path" + c.ennd)
+                else
+                    parts2 = inp[2].split("/")
+                    newName = parts2[-1]
+                    parent = inp[2][:inp[2].len - newName.len - 1]
+                    if parent == "" then parent = "/"
+                    pf = sComp.File(parent)
+                    if not pf then
+                        print(c.grey + "  parent not found: " + parent + c.ennd)
+                    else
+                        res = pf.create_folder(newName)
+                        if res == "" or res == null or res == 1 then
+                            print(c.lime + "  mkdir " + inp[2] + c.ennd)
+                        else
+                            print(c.yellow + "  mkdir failed: " + res + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "touch" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing path" + c.ennd)
+                else
+                    parts2 = inp[2].split("/")
+                    newName = parts2[-1]
+                    parent = inp[2][:inp[2].len - newName.len - 1]
+                    if parent == "" then parent = "/"
+                    res = sComp.touch(parent, newName)
+                    if res == "" or res == null or res == 1 then
+                        print(c.lime + "  touch " + inp[2] + c.ennd)
+                    else
+                        print(c.yellow + "  touch failed: " + res + c.ennd)
+                    end if
+                end if
+
+            else if sub == "perms" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing path" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[2] + c.ennd)
+                    else
+                        print(c.white + "  " + f.permissions + "  owner:" + f.owner + "  " + inp[2] + c.ennd)
+                    end if
+                end if
+
+            else if sub == "ls" then
+                lsPath = "/"
+                if inp.len >= 3 then lsPath = inp[2]
+                f = sComp.File(lsPath)
+                if not f then
+                    print(c.grey + "  not found: " + lsPath + c.ennd)
+                else if not f.is_folder then
+                    print(c.grey + "  not a folder: " + lsPath + c.ennd)
+                else
+                    names = []
+                    for sub2 in f.get_folders
+                        names.push(sub2.name + "/")
+                    end for
+                    for fl in f.get_files
+                        names.push(fl.name)
+                    end for
+                    if names.len > 0 then
+                        print(c.white + "  " + names.join("  ") + c.ennd)
+                    else
+                        print(c.grey + "  (empty)" + c.ennd)
+                    end if
+                end if
+
+            else if sub == "tree" then
+                treePath = "/"
+                if inp.len >= 3 then treePath = inp[2]
+                maxDepth = 3
+                if inp.len >= 4 then maxDepth = inp[3].to_int
+                walkStack = [[treePath, 0]]
+                while walkStack.len > 0
+                    cur = walkStack.pop
+                    curPath = cur[0]
+                    curDepth = cur[1]
+                    tf = sComp.File(curPath)
+                    if not tf then continue
+                    pad = ""
+                    d2 = 0
+                    while d2 < curDepth
+                        pad = pad + "  "
+                        d2 = d2 + 1
+                    end while
+                    if tf.is_folder then
+                        print(c.cyan + pad + curPath.split("/")[-1] + "/" + c.ennd)
+                        if curDepth < maxDepth then
+                            for fl in tf.get_files
+                                print(c.white + pad + "  " + fl.name + c.ennd)
+                            end for
+                            subs = tf.get_folders
+                            j = subs.len - 1
+                            while j >= 0
+                                walkStack.push([curPath + "/" + subs[j].name, curDepth + 1])
+                                j = j - 1
+                            end while
+                        end if
+                    else
+                        print(c.white + pad + tf.name + c.ennd)
+                    end if
+                end while
+
+            else if sub == "find" then
+                if inp.len < 3 then
+                    print(c.yellow + "  usage: find <pattern> [path]" + c.ennd)
+                else
+                    findPath = "/"
+                    if inp.len >= 4 then findPath = inp[3]
+                    total = RFind(inp[2], findPath, obj, findResults)
+                    print(c.cyan + "  " + total + " result(s)" + c.ennd)
+                end if
+
+            else if sub == "name" then
+                print(c.white + "  " + sComp.get_name + c.ennd)
+
+            else if sub == "ports" then
+                pts = sComp.get_ports
+                if pts and pts.len > 0 then
+                    for p in pts
+                        st = "closed"
+                        if p.is_closed == 0 then st = "open"
+                        print(c.white + "  " + p.port_number + "  " + st + c.ennd)
+                    end for
+                else
+                    print(c.grey + "  (no ports)" + c.ennd)
+                end if
+
+            else if sub == "procs" then
+                if typeof(obj) == "shell" then
+                    plist = sComp.show_procs
+                    if plist and plist != "" then
+                        print(c.white + plist + c.ennd)
+                    else
+                        print(c.grey + "  (no procs)" + c.ennd)
+                    end if
+                else
+                    print(c.grey + "  (computer object - needs a shell; skipped)" + c.ennd)
+                end if
+
+            else if sub == "users" then
+                hf = sComp.File("/home")
+                if not hf then
+                    print(c.grey + "  no /home" + c.ennd)
+                else
+                    unames = []
+                    for u in hf.get_folders
+                        unames.push(u.name)
+                    end for
+                    if unames.len > 0 then
+                        print(c.white + "  " + unames.join("  ") + c.ennd)
+                    else
+                        print(c.grey + "  (none)" + c.ennd)
+                    end if
+                end if
+
+            else if sub == "ps" then
+                gcoP = get_custom_object
+                if not gcoP.hasIndex("psResults") then gcoP.psResults = []
+                gcoP.psResults = []
+                lanIpP = sComp.local_ip
+                pubIpP = sComp.public_ip
+                procStr = sComp.show_procs
+                if procStr == null or procStr == "" then
+                    print(c.grey + "  (no processes)" + c.ennd)
+                else
+                    print(format_columns(procStr))
+                    for pline in procStr.split(char(10))
+                        if pline == "" then continue
+                        if pline.indexOf("USER") != null and pline.indexOf("PID") != null then continue
+                        gcoP.psResults.push(lanIpP + " | " + pline)
+                    end for
+                end if
+
+            else if sub == "harvest" then
+                homeDir3 = sComp.File("/home")
+                if not homeDir3 then
+                    print(c.grey + "  no /home" + c.ennd)
+                else
+                    harvCount = 0
+                    gcoH = get_custom_object
+                    if not gcoH.hasIndex("harvestResults") then gcoH.harvestResults = []
+                    for user3 in homeDir3.get_folders
+                        for target3 in ["Mail.txt", "Bank.txt"]
+                            hf3 = sComp.File("/home/" + user3.name + "/Config/" + target3)
+                            if not hf3 then continue
+                            if not hf3.has_permission("r") then continue
+                            content3 = hf3.get_content
+                            if not content3 or content3 == "" then continue
+                            print(c.grey + "  " + user3.name + "/" + target3 + c.ennd)
+                            for hline3 in content3.split(char(10))
+                                if hline3 == "" then continue
+                                hparts3 = hline3.split(":")
+                                if hparts3.len < 2 then continue
+                                pw3 = CrackHash(hparts3[1])
+                                if pw3 then
+                                    result3 = sComp.local_ip + " | " + hparts3[0] + " : " + pw3
+                                    print(c.lime + "    " + hparts3[0] + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw3 + c.ennd)
+                                    gcoH.harvestResults.push(result3)
+                                    harvCount = harvCount + 1
+                                end if
+                            end for
+                        end for
+                    end for
+                    if harvCount == 0 then
+                        print(c.grey + "  no creds found" + c.ennd)
+                    else
+                        globals.pipeResult = gcoH.harvestResults.join(",")
+                        gcoC2 = get_custom_object
+                        if not gcoC2.hasIndex("clips") then gcoC2.clips = {}
+                        gcoC2.clips["harvested"] = globals.pipeResult
+                        globals.pipeVars["harvested"] = globals.pipeResult
+                    end if
+                end if
+
+            else if sub == "peek" then
+                homeDir4 = sComp.File("/home")
+                if not homeDir4 then
+                    print(c.grey + "  no /home" + c.ennd)
+                else
+                    peekCount = 0
+                    gcoPk = get_custom_object
+                    if not gcoPk.hasIndex("peekResults") then gcoPk.peekResults = []
+                    for user4 in homeDir4.get_folders
+                        for target4 in ["Mail.txt", "Bank.txt"]
+                            hf4 = sComp.File("/home/" + user4.name + "/Config/" + target4)
+                            if not hf4 then continue
+                            if not hf4.has_permission("r") then continue
+                            content4 = hf4.get_content
+                            if not content4 or content4 == "" then continue
+                            print(c.grey + "  " + user4.name + "/" + target4 + c.ennd)
+                            for hline4 in content4.split(char(10))
+                                if hline4 == "" then continue
+                                hparts4 = hline4.split(":")
+                                if hparts4.len < 2 then continue
+                                print(c.white + "    " + hparts4[0] + c.ennd + c.grey + " : " + c.ennd + c.gold + hparts4[1] + c.ennd)
+                                // clean "user:hash" (not stackrun harvest's
+                                // "ip | user : pass" format) so this chains
+                                // straight into decipher's batch mode, e.g.
+                                // stackrun peek | clip @a | decipher
+                                gcoPk.peekResults.push(hparts4[0] + ":" + hparts4[1])
+                                peekCount = peekCount + 1
+                            end for
+                        end for
+                    end for
+                    if peekCount == 0 then
+                        print(c.grey + "  no creds found" + c.ennd)
+                    else
+                        globals.pipeResult = gcoPk.peekResults.join(",")
+                        gcoC3 = get_custom_object
+                        if not gcoC3.hasIndex("clips") then gcoC3.clips = {}
+                        gcoC3.clips["peeked"] = globals.pipeResult
+                        globals.pipeVars["peeked"] = globals.pipeResult
+                    end if
+                end if
+
+            else
+                print(c.yellow + "  unknown mode: " + sub + "  (stackrun help)" + c.ennd)
+            end if
+
+            i = i + 1
+        end for
+        if sub == "find" and findResults.len > 0 then
+            globals.pipeResult = findResults.join(",")
+        end if
+        div
+        print(c.cyan + "stackrun complete across " + objectStack.len + " object(s)" + c.ennd)
+    end if
+end function
+CommandTable["stackrun"] = @CmdStackrun
+
+// ── stackpick ────────────────────────────────────────────────────
+CmdStackpick = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stackpick <condition>")
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stackpick: stack is empty" + c.ennd)
+        globals.pipeFailed = true
+    else
+        condTokens = inp[1:]
+        found = null
+        savedObj = globals.object
+        for obj in objectStack
+            globals.object = obj
+            if EvalCondition(condTokens) then
+                found = obj
+                break
+            end if
+        end for
+        if found != null then
+            globals.object = found
+            if typeof(found) == "shell" then
+                print(c.green + "stackpick: " + found.host_computer.public_ip + " (" + typeof(found) + ")" + c.ennd)
+            else if typeof(found) == "computer" then
+                print(c.green + "stackpick: " + found.public_ip + " (" + typeof(found) + ")" + c.ennd)
+            end if
+        else
+            globals.object = savedObj
+            globals.pipeFailed = true
+            print(c.yellow + "<b>stackpick: no match found" + c.ennd)
+        end if
+    end if
+end function
+CommandTable["stackpick"] = @CmdStackpick
+
+// ── stackfor ─────────────────────────────────────────────────────
+CmdStackfor = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stackfor <condition> | <command>")
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stackfor: stack is empty" + c.ennd)
+        globals.pipeFailed = true
+    else if pipeQueue.len == 0 then
+        print(c.yellow + "<b>stackfor: no command — use: stackfor <cond> | <cmd>" + c.ennd)
+        globals.pipeFailed = true
+    else
+        condTokens = inp[1:]
+        matches = []
+        savedObj = globals.object
+        for obj in objectStack
+            globals.object = obj
+            if EvalCondition(condTokens) then matches.push(obj)
+        end for
+        globals.object = savedObj
+        if matches.len == 0 then
+            globals.pipeFailed = true
+            globals.pipeQueue = []
+            print(c.yellow + "<b>stackfor: no objects match condition" + c.ennd)
+        else
+            globals.stackforSaved = savedObj
+            globals.stackforBody = pipeQueue[0]
+            globals.pipeQueue = []
+            globals.stackforItems = matches[1:]
+            globals.object = matches[0]
+            globals.pipeQueue.push(stackforBody)
+            if typeof(globals.object) == "shell" then
+                print(c.cyan + "<b>stackfor: " + matches.len + " match(es) — starting with " + globals.object.host_computer.public_ip + c.ennd)
+            else if typeof(globals.object) == "computer" then
+                print(c.cyan + "<b>stackfor: " + matches.len + " match(es) — starting with " + globals.object.public_ip + c.ennd)
+            end if
+        end if
+    end if
+end function
+CommandTable["stackfor"] = @CmdStackfor
+
+// ── stacktree ────────────────────────────────────────────────────
+CmdStacktree = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>stacktree: stack is empty" + c.ennd)
+    else
+        treePath = "/"
+        storeKey = null
+        if inp.len >= 2 and inp[-1][0:1] == "@" then
+            storeKey = inp[-1][1:]
+            if inp.len >= 3 then treePath = inp[1:-1].join(" ") else treePath = "/"
+        else if inp.len >= 2 then
+            treePath = inp[1]
+        end if
+        gcoT = get_custom_object
+        gcoT.treeResults = []
+        i = 1
+        for obj in objectStack
+            if typeof(obj) != "shell" and typeof(obj) != "computer" then
+                i = i + 1
+                continue
+            end if
+            comp = obj
+            if typeof(obj) == "shell" then comp = obj.host_computer
+            print(c.cyan + "<b>[" + i + "] " + comp.public_ip + c.ennd + c.grey + "  lan:" + comp.local_ip + c.ennd)
+            lanIp4 = comp.local_ip
+            queue4 = [treePath]
+            while queue4.len > 0
+                p4 = queue4.pull
+                f4 = comp.File(p4)
+                if not f4 then continue
+                if f4.is_folder then
+                    print(c.cyan + "  " + f4.path + "/" + c.ennd)
+                    for sub4 in f4.get_folders
+                        queue4.push(sub4.path)
+                    end for
+                    for fl4 in f4.get_files
+                        entry4 = lanIp4 + " | " + fl4.path
+                        print(c.white + "  " + fl4.path + c.ennd)
+                        gcoT.treeResults.push(entry4)
+                    end for
+                else
+                    entry4 = lanIp4 + " | " + f4.path
+                    print(c.white + "  " + f4.path + c.ennd)
+                    gcoT.treeResults.push(entry4)
+                end if
+            end while
+            i = i + 1
+        end for
+        div
+        joined4 = gcoT.treeResults.join(",")
+        globals.pipeResult = joined4
+        print(c.cyan + "stacktree: " + gcoT.treeResults.len + " file(s) across " + objectStack.len + " object(s)" + c.ennd)
+        if storeKey != null then
+            gco = get_custom_object
+            if not gco.hasIndex("clips") then gco.clips = {}
+            gco.clips[storeKey] = joined4
+            globals.pipeVars[storeKey] = joined4
+            print(c.lime + "  @" + storeKey + " = " + gcoT.treeResults.len + " entries" + c.ennd)
+        end if
+    end if
+end function
+CommandTable["stacktree"] = @CmdStacktree
+
+// ── stacklog ─────────────────────────────────────────────────────
+CmdStacklog = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stacklog <filepath>")
+        print(c.grey + "  e.g.  stacklog /root/ai/harvest_log.txt" + c.ennd)
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stacklog: stack is empty" + c.ennd)
+    else
+        logPath = inp[1]
+        parts2 = logPath.split("/")
+        fileName = parts2[-1]
+        folder = logPath[:logPath.len - fileName.len - 1]
+        if folder == "" then folder = "/"
+        logFile = myComp.File(logPath)
+        if not logFile then
+            myComp.touch(folder, fileName)
+            logFile = myComp.File(logPath)
+        end if
+        if not logFile then
+            print(c.yellow + "<b>stacklog: could not create " + logPath + c.ennd)
+        else
+            existing = logFile.get_content
+            if not existing or existing == null then existing = ""
+            logLines = ""
+            totalCreds = 0
+            i = 1
+            for obj in objectStack
+                comp2 = null
+                if typeof(obj) == "shell" then
+                    comp2 = obj.host_computer
+                    rootStr = "guest"
+                    if IsRoot(obj) then rootStr = "root"
+                    logLines = logLines + "[" + i + "] " + rootStr + " shell  pub:" + comp2.public_ip + "  lan:" + comp2.local_ip + char(10)
+                else if typeof(obj) == "computer" then
+                    comp2 = obj
+                    rootStr = "guest"
+                    // IsRoot hardcodes typeof(x)=="shell" and always
+                    // returns false otherwise — GetUserCtx handles
+                    // computers too
+                    if GetUserCtx(obj) == "root" then rootStr = "root"
+                    logLines = logLines + "[" + i + "] " + rootStr + " computer  pub:" + obj.public_ip + "  lan:" + obj.local_ip + char(10)
+                end if
+                if comp2 != null then
+                    homeDir2 = comp2.File("/home")
+                    if homeDir2 then
+                        for user2 in homeDir2.get_folders
+                            for target2 in ["Mail.txt", "Bank.txt"]
+                                hf2 = comp2.File("/home/" + user2.name + "/Config/" + target2)
+                                if not hf2 then continue
+                                if not hf2.has_permission("r") then continue
+                                content2 = hf2.get_content
+                                if not content2 or content2 == "" then continue
+                                logLines = logLines + "  " + user2.name + "/" + target2 + char(10)
+                                for hline2 in content2.split(char(10))
+                                    if hline2 == "" then continue
+                                    hparts2 = hline2.split(":")
+                                    if hparts2.len < 2 then continue
+                                    pw2 = CrackHash(hparts2[1])
+                                    if pw2 then
+                                        logLines = logLines + "    " + hparts2[0] + " : " + pw2 + char(10)
+                                        totalCreds = totalCreds + 1
+                                        print(c.lime + "  " + hparts2[0] + c.ennd + c.grey + " : " + c.gold + "<b>" + pw2 + c.ennd)
+                                    end if
+                                end for
+                            end for
+                        end for
+                    end if
+                end if
+                logLines = logLines + char(10)
+                i = i + 1
+            end for
+            logFile.set_content(existing + logLines)
+            print(c.lime + "  logged " + objectStack.len + " object(s) + " + totalCreds + " credential(s) to " + logPath + c.ennd)
+        end if
+    end if
+end function
+CommandTable["stacklog"] = @CmdStacklog
+
+// ── autoharvest ──────────────────────────────────────────────────
+CmdAutoharvest = function(inp)
+    if inp.len == 3 then
+        AutoHarvest(inp[1].to_int, inp[2].to_int)
+    else if inp.len == 2 then
+        AutoHarvest(inp[1].to_int, 5)
+    else
+        AutoHarvest(1, 5)
+    end if
+end function
+CommandTable["autoharvest"] = @CmdAutoharvest
+
+// ── harvestgrep ──────────────────────────────────────────────────
+CmdHarvestgrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: harvestgrep <pattern> [@var]")
+        print(c.grey + "  searches results stored by stackrun harvest" + c.ennd)
+    else
+        gcoH = get_custom_object
+        if not gcoH.hasIndex("harvestResults") or gcoH.harvestResults.len == 0 then
+            print(c.yellow + "<b>harvestgrep: no harvest results — run stackrun harvest first" + c.ennd)
+            globals.pipeFailed = true
+        else
+            pattern2 = inp[1]
+            matches2 = []
+            for r in gcoH.harvestResults
+                if r.indexOf(pattern2) != null then
+                    print(c.lime + "  " + r + c.ennd)
+                    matches2.push(r)
+                end if
+            end for
+            if matches2.len == 0 then
+                print(c.yellow + "<b>harvestgrep: no matches for '" + pattern2 + "'" + c.ennd)
+                globals.pipeFailed = true
+            else
+                print(c.cyan + "harvestgrep: " + matches2.len + " match(es)" + c.ennd)
+                joined2 = matches2.join(",")
+                globals.pipeResult = joined2
+                if inp.len >= 3 then
+                    k2 = inp[2]
+                    if k2[0:1] == "@" then k2 = k2[1:]
+                    gco = get_custom_object
+                    if not gco.hasIndex("clips") then gco.clips = {}
+                    gco.clips[k2] = joined2
+                    globals.pipeVars[k2] = joined2
+                    print(c.lime + "  @" + k2 + " = " + joined2 + c.ennd)
+                end if
+            end if
+        end if
+    end if
+end function
+CommandTable["harvestgrep"] = @CmdHarvestgrep
+
+// ── psgrep ───────────────────────────────────────────────────────
+CmdPsgrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: psgrep <pattern> [@var]")
+        print(c.grey + "  searches processes from stackrun ps" + c.ennd)
+    else
+        gcoP = get_custom_object
+        if not gcoP.hasIndex("psResults") or gcoP.psResults.len == 0 then
+            print(c.yellow + "<b>psgrep: no ps results — run stackrun ps first" + c.ennd)
+            globals.pipeFailed = true
+        else
+            pattern4 = inp[1]
+            matches4 = []
+            for r in gcoP.psResults
+                if r.indexOf(pattern4) != null then
+                    print(c.lime + "  " + r + c.ennd)
+                    matches4.push(r)
+                end if
+            end for
+            if matches4.len == 0 then
+                print(c.yellow + "<b>psgrep: no matches for '" + pattern4 + "'" + c.ennd)
+                globals.pipeFailed = true
+            else
+                print(c.cyan + "psgrep: " + matches4.len + " match(es)" + c.ennd)
+                joined4 = matches4.join(",")
+                globals.pipeResult = joined4
+                if inp.len >= 3 then
+                    k4 = inp[2]
+                    if k4[0:1] == "@" then k4 = k4[1:]
+                    gco = get_custom_object
+                    if not gco.hasIndex("clips") then gco.clips = {}
+                    gco.clips[k4] = joined4
+                    globals.pipeVars[k4] = joined4
+                    print(c.lime + "  @" + k4 + " = " + joined4 + c.ennd)
+                end if
+            end if
+        end if
+    end if
+end function
+CommandTable["psgrep"] = @CmdPsgrep
+
+// ── treegrep ─────────────────────────────────────────────────────
+CmdTreegrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: treegrep <pattern> [@var]")
+        print(c.grey + "  searches results stored by stacktree" + c.ennd)
+    else
+        gcoT = get_custom_object
+        if not gcoT.hasIndex("treeResults") or gcoT.treeResults.len == 0 then
+            print(c.yellow + "<b>treegrep: no tree results — run stacktree first" + c.ennd)
+            globals.pipeFailed = true
+        else
+            pattern3 = inp[1]
+            matches3 = []
+            for r in gcoT.treeResults
+                if r.indexOf(pattern3) != null then
+                    print(c.lime + "  " + r + c.ennd)
+                    matches3.push(r)
+                end if
+            end for
+            if matches3.len == 0 then
+                print(c.yellow + "<b>treegrep: no matches for '" + pattern3 + "'" + c.ennd)
+                globals.pipeFailed = true
+            else
+                print(c.cyan + "treegrep: " + matches3.len + " match(es)" + c.ennd)
+                joined3 = matches3.join(",")
+                globals.pipeResult = joined3
+                if inp.len >= 3 then
+                    k3 = inp[2]
+                    if k3[0:1] == "@" then k3 = k3[1:]
+                    gco = get_custom_object
+                    if not gco.hasIndex("clips") then gco.clips = {}
+                    gco.clips[k3] = joined3
+                    globals.pipeVars[k3] = joined3
+                    print(c.lime + "  @" + k3 + " = " + joined3 + c.ennd)
+                end if
+            end if
+        end if
+    end if
+end function
+CommandTable["treegrep"] = @CmdTreegrep
+
+
+// ================================================================
+//  vars.src  |  phantom module  |  variables, clips, aliases
+// ================================================================
+
+// ── clip ─────────────────────────────────────────────────────────
+CmdClip = function(inp)
+    gco = get_custom_object
+    if not gco.hasIndex("clips") then gco.clips = {}
+    if inp.len == 1 then
+        if gco.clips.len == 0 then
+            print(c.grey + "no clips stored" + c.ennd)
+        else
+            for k in gco.clips.indexes
+                print(c.gold + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gco.clips[k] + c.ennd)
+            end for
+        end if
+    else if inp[1] == "-d" or inp[1] == "-c" then
+        if inp.len < 3 then
+            if inp[1] == "-c" then
+                count = gco.clips.len
+                gco.clips = {}
+                for k in pipeVars.indexes
+                    pipeVars.remove(k)
+                end for
+                print(c.grey + "  cleared " + count + " clip(s)" + c.ennd)
+            else
+                print(c.yellow + "<b>clip -d: missing name (e.g. clip -d @a)" + c.ennd)
+            end if
+        else
+            k = inp[2]
+            if k[0:1] == "@" then k = k[1:]
+            if gco.clips.hasIndex(k) then
+                gco.clips.remove(k)
+                if pipeVars.hasIndex(k) then pipeVars.remove(k)
+                print(c.grey + "  cleared @" + k + c.ennd)
+            else
+                print(c.yellow + "  @" + k + " not found" + c.ennd)
+            end if
+        end if
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+
+        // Remove any comma-separated values that snuck into k (from variable substitution)
+        if k.indexOf(",") != null then
+            k = k.split(",")[0]
+        end if
+
+        // A pending object-list result (e.g. from "stack | clip @b")
+        // takes priority over the normal string path — objects can't be
+        // joined into gco.clips' plain-string values, so they get their
+        // own store (gco.objClips) that foreach/for @x in @b know to
+        // check. Only applies to the bare "clip @name" capture form,
+        // same as the string pipeResult path below it.
+        if inp.len < 3 and globals.pipeObjResult != null and globals.pipeObjResult.len > 0 then
+            gcoO = get_custom_object
+            if not gcoO.hasIndex("objClips") then gcoO.objClips = {}
+            gcoO.objClips[k] = globals.pipeObjResult
+            globals.pipeObjResult = null
+            print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gcoO.objClips[k].len + " object(s)" + c.ennd)
+            return
+        end if
+
+        // Check for += (accumulation mode)
+        if inp.len >= 3 and inp[2] == "+=" then
+            val = inp[3:].join(" ")
+            if val == "" or val == "+=" then val = pipeResult
+
+            if gco.clips.hasIndex(k) and gco.clips[k] != "" then
+                existing = gco.clips[k]
+                items = existing.split(",")
+                if items.indexOf(val) == null then
+                    val = existing + "," + val
+                else
+                    val = existing
+                end if
+            end if
+            gco.clips[k] = val
+            pipeVars[k] = val
+            globals.pipeResult = val
+            print(c.lime + "  @" + k + " += " + val + c.ennd)
+        else if inp.len < 3 then
+            if pipeResult != "" then
+                val = pipeResult
+                gco.clips[k] = val
+                pipeVars[k] = val
+                // leave pipeResult as-is (don't clear it) — lets clip act as
+                // a tee, e.g. "harvest | clip @a | write file" both saves the
+                // named clip AND still hands the same result on to write
+                print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + val + c.ennd)
+            else if gco.clips.hasIndex(k) then
+                print(c.gold + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gco.clips[k] + c.ennd)
+            else
+                print(c.yellow + "  @" + k + " not set  (usage: clip @" + k + " <value>)" + c.ennd)
+            end if
+        else
+            val = inp[2:].join(" ")
+            if val == "stack" or val == "stack.len" then val = "" + objectStack.len
+            if gco.clips.hasIndex(k) and gco.clips[k] != "" then
+                val = gco.clips[k] + "," + val
+            end if
+            gco.clips[k] = val
+            pipeVars[k] = val
+            print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + val + c.ennd)
+        end if
+    end if
+end function
+CommandTable["clip"] = @CmdClip
+
+// ── inc ──────────────────────────────────────────────────────────
+CmdInc = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: inc @var [amount]")
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        amount = 1
+        if inp.len >= 3 then amount = inp[2].to_int
+        gco = get_custom_object
+        if not gco.hasIndex("clips") then gco.clips = {}
+        cur = 0
+        if gco.clips.hasIndex(k) and gco.clips[k] != "" then cur = gco.clips[k].to_int
+        cur = cur + amount
+        val = "" + cur
+        gco.clips[k] = val
+        pipeVars[k] = val
+        globals.pipeResult = val
+        print(c.grey + "  @" + k + " = " + val + c.ennd)
+    end if
+end function
+CommandTable["inc"] = @CmdInc
+
+// ── dec ──────────────────────────────────────────────────────────
+CmdDec = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: dec @var [amount]")
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        amount = 1
+        if inp.len >= 3 then amount = inp[2].to_int
+        gco = get_custom_object
+        if not gco.hasIndex("clips") then gco.clips = {}
+        cur = 0
+        if gco.clips.hasIndex(k) and gco.clips[k] != "" then cur = gco.clips[k].to_int
+        cur = cur - amount
+        val = "" + cur
+        gco.clips[k] = val
+        pipeVars[k] = val
+        globals.pipeResult = val
+        print(c.grey + "  @" + k + " = " + val + c.ennd)
+    end if
+end function
+CommandTable["dec"] = @CmdDec
+
+// ── math ─────────────────────────────────────────────────────────
+CmdMath = function(inp)
+    if inp.len < 5 then
+        print("<b>Usage: math @result @a +|-|*|/ @b")
+        print(c.grey + "  e.g.  math @result @count + 1" + c.ennd)
+        print(c.grey + "  e.g.  math @remaining @goal - @found" + c.ennd)
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        leftTok2 = inp[2]
+        if leftTok2[0:1] == "@" then
+            vn2 = leftTok2[1:]
+            if pipeVars.hasIndex(vn2) then leftTok2 = pipeVars[vn2]
+        end if
+        op2 = inp[3]
+        rightTok2 = inp[4]
+        if rightTok2[0:1] == "@" then
+            vn2 = rightTok2[1:]
+            if pipeVars.hasIndex(vn2) then rightTok2 = pipeVars[vn2]
+        end if
+        lv2 = leftTok2.to_int
+        rv2 = rightTok2.to_int
+        result2 = 0
+        if op2 == "+" then
+            result2 = lv2 + rv2
+        else if op2 == "-" then
+            result2 = lv2 - rv2
+        else if op2 == "*" then
+            result2 = lv2 * rv2
+        else if op2 == "/" then
+            if rv2 == 0 then
+                print(c.yellow + "<b>math: division by zero" + c.ennd)
+                globals.pipeFailed = true
+            else
+                result2 = floor(lv2 / rv2)
+            end if
+        else
+            print(c.yellow + "<b>math: unknown operator '" + op2 + "' — use + - * /" + c.ennd)
+            globals.pipeFailed = true
+        end if
+        if not pipeFailed then
+            val2 = "" + result2
+            gco = get_custom_object
+            if not gco.hasIndex("clips") then gco.clips = {}
+            gco.clips[k] = val2
+            pipeVars[k] = val2
+            globals.pipeResult = val2
+            print(c.grey + "  @" + k + " = " + val2 + c.ennd)
+        end if
+    end if
+end function
+CommandTable["math"] = @CmdMath
+
+// ── alias ────────────────────────────────────────────────────────
+CmdAlias = function(inp)
+    gco = get_custom_object
+    if not gco.hasIndex("aliases") then gco.aliases = {}
+    aliasFile = currentPath + "/aliases.txt"
+
+    saveAliases = function()
+        f = myComp.File(aliasFile)
+        if not f then myComp.touch(currentPath, "aliases.txt")
+        f = myComp.File(aliasFile)
+        if not f then
+            print(c.yellow + "<b>alias: could not write " + aliasFile + c.ennd)
+            return
+        end if
+        lines = []
+        for k in globals.aliases.indexes
+            lines.push(k + "=" + globals.aliases[k])
+        end for
+        f.set_content(lines.join(char(10)))
+    end function
+
+    if inp.len == 1 then
+        if aliases.len == 0 then
+            print(c.grey + "no aliases defined" + c.ennd)
+        else
+            print(c.cyan + "<b>aliases:" + c.ennd)
+            for k in aliases.indexes
+                print(c.gold + "  " + k + c.ennd + c.grey + " = " + c.ennd + c.white + aliases[k] + c.ennd)
+            end for
+        end if
+
+    else if inp[1] == "-d" then
+        if inp.len < 3 then
+            print(c.yellow + "<b>usage: alias -d <name>" + c.ennd)
+        else
+            k = inp[2]
+            if aliases.hasIndex(k) then
+                globals.aliases.remove(k)
+                gco.aliases.remove(k)
+                saveAliases()
+                print(c.grey + "  alias '" + k + "' removed" + c.ennd)
+            else
+                print(c.yellow + "  alias '" + k + "' not found" + c.ennd)
+            end if
+        end if
+
+    else if inp.len < 3 then
+        print(c.yellow + "<b>usage: alias <name> <command...>" + c.ennd)
+        print(c.grey + "  e.g.  alias gs grab @t 80 -push" + c.ennd)
+        print(c.grey + "  alias -d <name>  to remove" + c.ennd)
+
+    else
+        k = inp[1]
+        val = inp[2:].join(" ")
+        globals.aliases[k] = val
+        gco.aliases[k] = val
+        saveAliases()
+        print(c.lime + "  alias '" + k + "' = " + val + c.ennd)
+    end if
+end function
+CommandTable["alias"] = @CmdAlias
+
+// ── ask ──────────────────────────────────────────────────────────
+CmdAsk = function(inp)
+    if inp.len < 2 then
+        print(c.yellow + "<b>usage: ask @var [prompt]" + c.ennd)
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        prompt = ""
+        if inp.len >= 3 then prompt = inp[2:].join(" ")
+        val = user_input(c.gold + prompt + c.ennd, false, false)
+        if val != "" then
+            gco = get_custom_object
+            if not gco.hasIndex("clips") then gco.clips = {}
+            gco.clips[k] = val
+            pipeVars[k] = val
+            globals.pipeResult = val
+            print(c.lime + "  @" + k + " = " + val + c.ennd)
+        else
+            print(c.grey + "  @" + k + " unchanged (empty input)" + c.ennd)
+        end if
+    end if
+end function
+CommandTable["ask"] = @CmdAsk
+
+// ── echo ─────────────────────────────────────────────────────────
+CmdEcho = function(inp)
+    if inp.len == 1 then
+        print("")
+    else
+        print(c.white + inp[1:].join(" ") + c.ennd)
+    end if
+end function
+CommandTable["echo"] = @CmdEcho
+
+// ── log ──────────────────────────────────────────────────────────
+CmdLog = function(inp)
+    if inp.len < 3 then
+        print("<b>Usage: log <filepath> <message...>")
+        print(c.grey + "  e.g.  log /root/ai/creds.txt @a:@port" + c.ennd)
+    else
+        logPath = inp[1]
+        msg = inp[2:].join(" ")
+        parts2 = logPath.split("/")
+        fileName = parts2[-1]
+        folder = logPath[:logPath.len - fileName.len - 1]
+        if folder == "" then folder = "/"
+        logFile = myComp.File(logPath)
+        if not logFile then
+            myComp.touch(folder, fileName)
+            logFile = myComp.File(logPath)
+        end if
+        if not logFile then
+            print(c.yellow + "<b>log: could not create " + logPath + c.ennd)
+            globals.pipeFailed = true
+        else
+            existing = logFile.get_content
+            if not existing or existing == null then existing = ""
+            logFile.set_content(existing + msg + char(10))
+            print(c.grey + "  logged: " + msg + c.ennd)
+        end if
+    end if
+end function
+CommandTable["log"] = @CmdLog
+
+// ── write ────────────────────────────────────────────────────────
+// Appends whatever the pipe just produced to a file, one entry per
+// line — e.g. "stack | clip @b | foreach @b | harvest | write creds.txt"
+// logs every cracked user:pass across the whole object list as it's
+// found. Deliberately splits pipeResult on "," instead of writing it
+// as one joined line: harvest/ports/etc. all comma-join multiple
+// results into pipeResult for @clip purposes, but a written log should
+// read as one finding per line, not one giant CSV row.
+// write <file> -r instead reads the file back and prints it with line
+// numbers (no write) — meant as a lookup step before a future flag
+// that edits/replaces one specific line.
+// Path resolution matches touch: an absolute path (leading "/") is
+// used as-is, a bare name like "creds.txt" resolves against the
+// current dir (myPath/remotePath) via the same GetFile/Touch helpers
+// touch itself uses — no separate ad-hoc folder-splitting here.
+// Shared by write (obj=myComp, local=true) and rwrite (obj=object,
+// local=false) — same split as Ls/Cat/Cp/Mv/Touch already use for
+// their own r-prefixed counterparts, see remote.src.
+Write = function(inp, obj, local)
+    cmdName = "write"
+    if not local then cmdName = "rwrite"
+    if inp.len < 2 then
+        print("<b>Usage: " + cmdName + " <file> [-l]")
+        print(c.grey + "  e.g.  harvest | " + cmdName + " creds.txt        (saves in the current dir, like touch)" + c.ennd)
+        print(c.grey + "  e.g.  harvest | " + cmdName + " /root/ai/creds.txt" + c.ennd)
+        print(c.grey + "  e.g.  " + cmdName + " creds.txt -l   (print file, numbered — see append)" + c.ennd)
+        return
+    end if
+
+    filePath = inp[1]
+    f = GetFile(filePath, obj, local)
+    if not f then
+        Touch(filePath, obj, local)
+        f = GetFile(filePath, obj, local)
+    end if
+    if not f then
+        print(c.yellow + "<b>" + cmdName + ": could not create " + filePath + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    if inp.len >= 3 and inp[2] == "-l" then
+        content = f.get_content
+        if not content or content == null then content = ""
+        lines = content.split(char(10))
+        // drop the trailing blank line from the final char(10) every write leaves
+        if lines.len > 0 and lines[-1] == "" then lines = lines[:-1]
+        print(c.cyan + "<b>" + filePath + "  (" + lines.len + " line(s))" + c.ennd)
+        i = 1
+        for ln in lines
+            print(c.gold + "  [" + i + "] " + c.ennd + c.white + ln + c.ennd)
+            i = i + 1
+        end for
+        return
+    end if
+
+    if pipeResult == "" then
+        print(c.yellow + "<b>" + cmdName + ": nothing in the pipe to write" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    entries = pipeResult.split(",")
+    existing = f.get_content
+    if not existing or existing == null then existing = ""
+    out = existing
+    written = 0
+    for e in entries
+        if e == "" then continue
+        out = out + e + char(10)
+        written = written + 1
+    end for
+    f.set_content(out)
+    print(c.lime + "  wrote " + written + " line(s) to " + filePath + c.ennd)
+    globals.pipeResult = ""
+end function
+
+CmdWrite = function(inp)
+    Write(inp, myComp, true)
+end function
+CommandTable["write"] = @CmdWrite
+
+// ── append ───────────────────────────────────────────────────────
+// Replaces one specific existing line in a file, by the line number
+// "write <file> -l" just showed you — e.g. harvest wrote a wrong
+// password on line 3, "append creds.txt -l 3 -t user:realpass" fixes
+// just that line in place. -t's text can be a clip too (e.g. -t @fix)
+// since the main loop already substitutes any @name with a value
+// pipeVars holds before this ever runs (see phantom.src's token
+// substitution) — nothing special to do for that here.
+CmdAppend = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: append <file> -l <line#> -t <text>")
+        print(c.grey + "  e.g.  append creds.txt -l 3 -t user:realpass" + c.ennd)
+        print(c.grey + "  e.g.  append creds.txt -l 3 -t @fix   (replace with a clip's value)" + c.ennd)
+        return
+    end if
+
+    filePath = inp[1]
+    lineNum  = null
+    text     = null
+
+    i = 2
+    while i < inp.len
+        if inp[i] == "-l" and i + 1 < inp.len then
+            lineNum = inp[i+1].to_int
+            i = i + 2
+        else if inp[i] == "-t" and i + 1 < inp.len then
+            text = inp[i+1:].join(" ")
+            i = inp.len
+        else
+            i = i + 1
+        end if
+    end while
+
+    if lineNum == null or text == null then
+        print(c.yellow + "<b>append: need both -l <line#> and -t <text>" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    f = GetFile(filePath, myComp, true)
+    if not f then
+        print(c.yellow + "<b>append: file not found: " + filePath + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    content = f.get_content
+    if not content or content == null then content = ""
+    lines = content.split(char(10))
+    if lines.len > 0 and lines[-1] == "" then lines = lines[:-1]
+
+    if lineNum < 1 or lineNum > lines.len then
+        print(c.yellow + "<b>append: line " + lineNum + " out of range — file has " + lines.len + " line(s), see write " + filePath + " -l" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    lines[lineNum - 1] = text
+    f.set_content(lines.join(char(10)) + char(10))
+    print(c.lime + "  replaced line " + lineNum + " in " + filePath + c.ennd)
+end function
+CommandTable["append"] = @CmdAppend
