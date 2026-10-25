@@ -1,0 +1,355 @@
+// slb.src — LAN bounce scanner + grabber
+// Build: build /root/ai/tp/slb.src /root/ai/tp
+// gco.slbLib (optional) — load specific lib instead of dump_lib
+//
+// Scans the lib on gco.slbIp:gco.slbPort and, for each candidate
+// mem/val pair, immediately tries overflow() while still holding the
+// live net_use session (no separate glb payload/launch needed).
+// Results:
+//   gco.slbResults / gco.slbCount        — all candidates found (display)
+//   gco.slbObj / slbObjType / slbMem / slbVal — first working exploit, if any
+
+gco = get_custom_object
+
+// clear stale results from a previous run up front — every exit path
+// below (missing lib, no session, patched, no mems) must leave this
+// run's outcome unambiguous rather than a leftover object from before
+gco.slbObj     = null
+gco.slbObjType = ""
+gco.slbMem     = ""
+gco.slbVal     = ""
+gco.slbResults = null
+gco.slbCount   = 0
+gco.slbPatched = 0
+// caller polls this instead of a fixed wait() — lets it stop waiting
+// the moment this run actually finishes, success or failure, instead
+// of always burning the full timeout regardless of how fast this was
+gco.slbDone    = false
+gco.slbUserCtx = ""
+
+// mirrors ops.src's GetUserCtx — can't call it directly, this is a
+// standalone script with its own scope, no access to phantom's helpers
+GetUserCtx = function(obj)
+    if typeof(obj) != "shell" and typeof(obj) != "computer" then return ""
+    rhost = obj
+    if typeof(obj) == "shell" then rhost = obj.host_computer
+    f = rhost.File("/etc/passwd")
+    if not f then return ""
+    if f.has_permission("w") then return "root" else return "guest"
+end function
+
+// confirmed: /lib/metaxploit.so is NOT reliably present on target
+// machines (unlike the reference toolkits' assumption, which likely
+// held for player-owned machines, not arbitrary targets) — the caller
+// uploads a copy alongside the binary, so check there first.
+//
+// Sharing a metaxploitLib handle across the object.launch() process
+// boundary via gco was tried three times (netmap x2, this slb cache
+// experiment once) and failed all three — net_use on a reused handle
+// comes back null ("Connection refused. Address unreachable"),
+// forcing a silent fresh-reload-and-retry that costs more than just
+// loading fresh every time would have. Not worth trying again — always
+// load a fresh local handle.
+mx = include_lib(program_path.split("/")[:-1].join("/") + "/metaxploit.so")
+if not mx then mx = include_lib("/lib/metaxploit.so")
+if not mx then
+    gco.slbDebug = "no metaxploit"
+    gco.slbDone = true
+    exit
+end if
+
+gco.slbDebug = "meta loaded"
+
+ns = mx.net_use(gco.slbIp, gco.slbPort)
+if not ns then
+    // direct net_use to the target's specific port failed — try
+    // bouncing off a weak lib already on THIS machine instead (same
+    // technique wstack/wsx.src uses): load+scan a local lib, then
+    // overflow with the target's ip as the inject arg. Only needs
+    // this machine to be on the same LAN as the target, not slbPort
+    // specifically to be open/reachable on the target itself.
+    bounceLib = mx.load("/lib/init.so")
+    if bounceLib == null then bounceLib = mx.load("/lib/libhttp.so")
+    if not bounceLib then
+        gco.slbDebug = "net_use failed on " + gco.slbIp + ":" + gco.slbPort + " — no bounce lib"
+        gco.slbDone = true
+        exit
+    end if
+
+    // db.txt-known mem/val pairs for this bounce lib+version — same
+    // shortcut the net_use-succeeded path below already gets. Without
+    // this, a LAN target reached only through the bounce fallback (the
+    // common case for anything not directly net_use-able) always paid
+    // for a full mx.scan()/scan_address() pass even when we already had
+    // a confirmed working pair for this exact lib+version.
+    bounceKnownPairs = []
+    if gco.hasIndex("edb") and gco.edb then
+        for e in gco.edb
+            exVer = ""
+            if e.hasIndex("ver") then exVer = e["ver"]
+            if e["lib"] == bounceLib.lib_name and exVer == bounceLib.version then
+                bounceKnownPairs.push([e["mem"], e["val"]])
+            end if
+        end for
+    end if
+
+    bounceResults = []
+    usedKnownBounce = false
+    if bounceKnownPairs.len > 0 then
+        for pair in bounceKnownPairs
+            if gco.slbObj then break
+            mem = pair[0]
+            val = pair[1]
+            obj = bounceLib.overflow(mem, val, gco.slbIp)
+            t = typeof(obj)
+            bounceResults.push(mem + char(3) + val + char(3) + t)
+            if t == "shell" or t == "computer" then
+                gco.slbObj      = obj
+                gco.slbObjType  = t
+                gco.slbMem      = mem
+                gco.slbVal      = val
+                usedKnownBounce = true
+            end if
+        end for
+    end if
+
+    // known pairs didn't pan out on this target (or there were none) —
+    // fall through to the full scan, same as the net_use-succeeded path
+    if not gco.slbObj then
+        bounceMems = mx.scan(bounceLib)
+        if bounceMems then
+            for mem in bounceMems
+                if gco.slbObj then break
+                raw = mx.scan_address(bounceLib, mem)
+                addrs = raw.split("Unsafe check: ")
+                for addr in addrs
+                    if gco.slbObj then break
+                    if addr == addrs[0] then continue
+                    p1 = addr.indexOf("<b>")
+                    p2 = addr.indexOf("</b>")
+                    if p1 == null or p2 == null then continue
+                    val = addr[p1+3:p2]
+                    if val == "" then continue
+                    obj = bounceLib.overflow(mem, val, gco.slbIp)
+                    t = typeof(obj)
+                    // record every attempt, not just the winner — matches the
+                    // 3-part mem/val/outcome format the other two slb loops
+                    // use, so ScanLanBounce's reader picks these up for
+                    // EdbAdd too instead of silently dropping bounce misses
+                    bounceResults.push(mem + char(3) + val + char(3) + t)
+                    if t == "shell" or t == "computer" then
+                        gco.slbObj     = obj
+                        gco.slbObjType = t
+                        gco.slbMem     = mem
+                        gco.slbVal     = val
+                    end if
+                    if t == "firewall" then gco.slbDebug = gco.slbDebug + " [FIREWALL TYPE: " + mem + " " + val + "]"
+                end for
+            end for
+        end if
+    end if
+
+    // set lib name/results regardless of outcome so the caller can still
+    // record misses (bounceResults non-empty) even when nothing worked —
+    // only truly empty (no candidates at all) falls back to "no vulns"
+    gco.slbLibName = bounceLib.lib_name
+    gco.slbLibVer  = bounceLib.version
+    gco.slbResults = bounceResults.join(char(2))
+    gco.slbCount   = bounceResults.len
+    if gco.slbObj then
+        gco.slbUserCtx = GetUserCtx(gco.slbObj)
+        if usedKnownBounce then
+            gco.slbDebug = "net_use failed — bounced via " + bounceLib.lib_name + " " + bounceLib.version + " — got " + gco.slbObjType + " via known db entry " + gco.slbMem + " " + gco.slbVal
+        else
+            gco.slbDebug = "net_use failed — bounced via " + bounceLib.lib_name + " " + bounceLib.version + " — got " + gco.slbObjType
+        end if
+    else
+        gco.slbDebug = "net_use failed on " + gco.slbIp + ":" + gco.slbPort + " — bounce also failed"
+    end if
+    gco.slbDone = true
+    exit
+end if
+
+// use specific lib if requested, otherwise dump_lib from port
+ml = null
+if gco.hasIndex("slbLib") and gco.slbLib != "" then
+    ml = mx.load("/lib/" + gco.slbLib)
+    if not ml then ml = mx.load(gco.slbLib)
+    if not ml then
+        gco.slbDebug = "lib not found: " + gco.slbLib
+        gco.slbDone = true
+        exit
+    end if
+    gco.slbDebug = "loaded lib: " + gco.slbLib
+else
+    ml = ns.dump_lib
+    if not ml then
+        gco.slbDebug = "dump_lib failed"
+        gco.slbDone = true
+        exit
+    end if
+end if
+
+gco.slbLibName = ml.lib_name
+gco.slbLibVer  = ml.version
+gco.slbDebug   = "lib: " + ml.lib_name + " " + ml.version
+
+// gco.deadLibs is plain data handed in by the caller (see
+// ScanLanBounce) — skip the whole scan/decode pass for a lib+version
+// already known to have nothing exploitable
+if gco.hasIndex("deadLibs") and gco.deadLibs then
+    for d in gco.deadLibs
+        if d.lib == ml.lib_name and d.ver == ml.version then
+            gco.slbDeadLib = true
+            gco.slbDebug   = gco.slbDebug + " — known dead, skipping scan"
+            gco.slbDone    = true
+            exit
+        end if
+    end for
+end if
+
+// gco.edb is plain data handed in by the caller (see ScanLanBounce) —
+// db.txt-known mem/val pairs for this exact lib+version, same shortcut
+// ScanLan/grab already get on the direct-ip path (KnownExploits in
+// hack.src). Try these directly before the slow mx.scan()/
+// scan_address() decode pass instead of always re-discovering the
+// same candidates on every LAN target running this lib+version.
+knownPairs = []
+if gco.hasIndex("edb") and gco.edb then
+    for e in gco.edb
+        exVer = ""
+        if e.hasIndex("ver") then exVer = e["ver"]
+        if e["lib"] == ml.lib_name and exVer == ml.version then
+            knownPairs.push([e["mem"], e["val"]])
+        end if
+    end for
+end if
+
+if knownPairs.len > 0 then
+    gco.slbDebug = gco.slbDebug + " — " + knownPairs.len + " known db entr(ies), trying direct"
+    knownResults = []
+    for pair in knownPairs
+        mem = pair[0]
+        val = pair[1]
+        // "skipped" (not "null") when a shell was already found by an
+        // earlier pair in this same loop — we never actually attempted
+        // this one, so it must not be recorded as a confirmed dud
+        outcome = "skipped"
+        if gco.slbObjType != "shell" then
+            obj = ml.overflow(mem, val, "")
+            t = typeof(obj)
+            outcome = t
+            if t == "shell" then
+                gco.slbObj     = obj
+                gco.slbObjType = t
+                gco.slbMem     = mem
+                gco.slbVal     = val
+            else if t == "computer" and not gco.slbObj then
+                gco.slbObj     = obj
+                gco.slbObjType = t
+                gco.slbMem     = mem
+                gco.slbVal     = val
+            end if
+            // exploratory: haven't confirmed what typeof() returns for a
+            // firewall-disable side-effect exploit — flag it loudly if it
+            // ever shows up. This runs on the remote target via
+            // object.launch(), so print() here would never reach the
+            // player's screen — route through gco.slbDebug instead, same
+            // as every other status this script reports back.
+            if t == "firewall" then gco.slbDebug = gco.slbDebug + " [FIREWALL TYPE: " + mem + " " + val + "]"
+        end if
+        knownResults.push(mem + char(3) + val + char(3) + outcome)
+    end for
+    if gco.slbObj then
+        // matches grab's own edb-hit behavior (ops.src) — a known entry
+        // paid off, done, no need for the slow scan/decode pass at all
+        gco.slbResults = knownResults.join(char(2))
+        gco.slbCount   = knownResults.len
+        gco.slbUserCtx = GetUserCtx(gco.slbObj)
+        gco.slbDebug   = gco.slbDebug + " — got " + gco.slbObjType + " via known db entry " + gco.slbMem + " " + gco.slbVal
+        gco.slbDone    = true
+        exit
+    end if
+    // known entries didn't pan out on THIS target (per-target preconditions
+    // like min registered users or a missing dependency lib can make the
+    // same lib+version fail here even though it worked elsewhere) — fall
+    // through to the full scan below instead of giving up, same as grab's
+    // "edb exploits failed - running full scan..." fallback in ops.src.
+    gco.slbDebug = gco.slbDebug + " — known entries didn't pan out, falling back to full scan"
+end if
+
+if ml.is_patched then
+    gco.slbPatched = 1
+    gco.slbDebug   = gco.slbDebug + " [patched]"
+    gco.slbDeadLib = true
+    gco.slbDone = true
+    exit
+end if
+
+mems = mx.scan(ml)
+if not mems then
+    gco.slbDebug = gco.slbDebug + " — no mems"
+    gco.slbDeadLib = true
+    gco.slbDone = true
+    exit
+end if
+
+gco.slbDebug = gco.slbDebug + " — " + mems.len + " mem(s)"
+
+results = []
+for mem in mems
+    // stop scanning entirely once we have a shell — scan_address is
+    // not free, no reason to keep decoding candidates we'll never try
+    if gco.slbObjType == "shell" then break
+    raw = mx.scan_address(ml, mem)
+    addrs = raw.split("Unsafe check: ")
+    for addr in addrs
+        if gco.slbObjType == "shell" then break
+        if addr == addrs[0] then continue
+        p1 = addr.indexOf("<b>")
+        p2 = addr.indexOf("</b>")
+        if p1 == null or p2 == null then continue
+        val = addr[p1+3:p2]
+        if val == "" then continue
+
+        // try it now, while ml is still live. 3-arg form with an empty
+        // inject — the 3rd arg is a generic optional value (password
+        // for password-change exploits, LAN ip for bounce exploits,
+        // ignored otherwise), not something reserved for locally-loaded
+        // libs specifically — session-bound metalibs use it too
+        //
+        // prefer a shell over a computer — keep trying remaining
+        // candidates once a computer is found in case a later one
+        // yields a shell instead; stop early once we actually have one
+        obj = ml.overflow(mem, val, "")
+        t = typeof(obj)
+        results.push(mem + char(3) + val + char(3) + t)
+        if t == "shell" then
+            gco.slbObj     = obj
+            gco.slbObjType = t
+            gco.slbMem     = mem
+            gco.slbVal     = val
+        else if t == "computer" and not gco.slbObj then
+            gco.slbObj     = obj
+            gco.slbObjType = t
+            gco.slbMem     = mem
+            gco.slbVal     = val
+        end if
+        // exploratory: haven't confirmed what typeof() returns for a
+        // firewall-disable side-effect exploit — flag it via slbDebug
+        // (print() here never reaches the player, this runs on the
+        // remote target) if it ever shows up
+        if t == "firewall" then gco.slbDebug = gco.slbDebug + " [FIREWALL TYPE: " + mem + " " + val + "]"
+    end for
+end for
+
+gco.slbResults = results.join(char(2))
+gco.slbCount   = results.len
+if gco.slbObj then
+    gco.slbUserCtx = GetUserCtx(gco.slbObj)
+    gco.slbDebug = gco.slbDebug + " — " + results.len + " result(s) — got " + gco.slbObjType + " via " + gco.slbMem + " " + gco.slbVal
+else
+    gco.slbDebug = gco.slbDebug + " — " + results.len + " result(s) — no working exploit"
+    if results.len == 0 then gco.slbDeadLib = true
+end if
+gco.slbDone = true
