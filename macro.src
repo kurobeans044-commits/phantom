@@ -1,0 +1,2854 @@
+// ================================================================
+// PHANTOM MACRO SYSTEM - macro.src
+// ================================================================
+
+// ── SplitFirst ───────────────────────────────────────────────────
+SplitFirst = function(str, sep, maxSplits)
+    result = []
+    remaining = str
+    i = 0
+    while i < maxSplits
+        pos = remaining.indexOf(sep)
+        if pos == null then break
+        result.push(remaining[:pos])
+        remaining = remaining[pos + 1:]
+        i = i + 1
+    end while
+    result.push(remaining)
+    return result
+end function
+
+// ── EvalCondition ────────────────────────────────────────────────
+EvalCondition = function(tokens)
+    if tokens.len == 0 then return false
+
+    orIdx = null
+    andIdx = null
+    i = 0
+    while i < tokens.len
+        if tokens[i] == "or"  then orIdx  = i
+        if tokens[i] == "and" then andIdx = i
+        i = i + 1
+    end while
+    if orIdx != null then
+        return EvalCondition(tokens[:orIdx]) or EvalCondition(tokens[orIdx+1:])
+    end if
+    if andIdx != null then
+        return EvalCondition(tokens[:andIdx]) and EvalCondition(tokens[andIdx+1:])
+    end if
+
+    // "stackhas <condition>" — true if ANY object on the stack
+    // matches <condition>, which can be anything EvalCondition itself
+    // supports (comparisons, and/or, negation, plain keywords like
+    // computer/shell/root/guest — evaluated recursively, per item).
+    // Unlike stackpick, this NEVER changes the currently held object —
+    // pure boolean check, restores whatever was held before returning
+    // either way, match or no match.
+    shNeg = false
+    shTokens = tokens
+    if tokens.len > 0 and (tokens[0] == "not" or tokens[0] == "no") then
+        shNeg = true
+        shTokens = tokens[1:]
+    end if
+    if shTokens.len >= 2 and shTokens[0] == "stackhas" then
+        subCond = shTokens[1:]
+        savedObjForHas = globals.object
+        shFound = false
+        for shItem in objectStack
+            globals.object = shItem
+            if EvalCondition(subCond) then
+                shFound = true
+                break
+            end if
+        end for
+        globals.object = savedObjForHas
+        if shNeg then return not shFound
+        return shFound
+    end if
+
+    resolve = function(t)
+        if t == "null" then return ""
+        if t.len > 1 and t[0:1] == "@" then
+            vn = t[1:]
+            if pipeVars.hasIndex(vn) then return pipeVars[vn]
+            gcoC = get_custom_object
+            if gcoC.hasIndex("clips") and gcoC.clips.hasIndex(vn) then return gcoC.clips[vn]
+            return ""
+        end if
+        return t
+    end function
+
+    negCmp = false
+    cmpTokens = tokens
+    if tokens.len > 0 and (tokens[0] == "not" or tokens[0] == "no") then
+        negCmp = true
+        cmpTokens = tokens[1:]
+    end if
+    opIdx = null
+    opStr = null
+    ops = ["<=", ">=", "!=", "==", "<", ">"]
+    for op in ops
+        idx = cmpTokens.indexOf(op)
+        if idx != null then
+            opIdx = idx
+            opStr = op
+        end if
+        if opIdx != null then break
+    end for
+    if opIdx != null then
+        leftTok  = cmpTokens[:opIdx].join(" ")
+        rightTok = cmpTokens[opIdx+1:].join(" ")
+        typeResult = null
+        if leftTok == "stack" then
+            lv = objectStack.len
+            // "stack == @a" / "stack != @a" etc. — compare against the
+            // COUNT captured by a prior "stack | clip @a", not just a
+            // literal number. Falls back to 0 if that clip was never
+            // taken, same as an empty/absent value elsewhere.
+            if rightTok.len > 1 and rightTok[0:1] == "@" then
+                gcoStackCmp = get_custom_object
+                clipCmpName = rightTok[1:]
+                if gcoStackCmp.hasIndex("objClips") and gcoStackCmp.objClips.hasIndex(clipCmpName) then
+                    rv = gcoStackCmp.objClips[clipCmpName].len
+                else
+                    rv = 0
+                end if
+            else
+                rv = rightTok.to_int
+            end if
+            if opStr == "==" then typeResult = lv == rv
+            if opStr == "!=" then typeResult = lv != rv
+            if opStr == "<"  then typeResult = lv < rv
+            if opStr == ">"  then typeResult = lv > rv
+            if opStr == "<=" then typeResult = lv <= rv
+            if opStr == ">=" then typeResult = lv >= rv
+        else if leftTok == "shell" or leftTok == "object" or leftTok == "computer" then
+            objType = typeof(globals.object)
+            // IsRoot hardcodes typeof(x)=="shell" and returns false for
+            // anything else, so it can never report root for a computer
+            // object even when its actual permissions say root — use
+            // GetUserCtx instead, which handles both types correctly
+            if rightTok == "root"     then typeResult = (objType == "shell" or objType == "computer") and GetUserCtx(globals.object) == "root"
+            if rightTok == "guest"    then typeResult = (objType == "shell" or objType == "computer") and GetUserCtx(globals.object) != "root"
+            if rightTok == "shell"    then typeResult = objType == "shell"
+            if rightTok == "computer" then typeResult = objType == "computer"
+            if rightTok == "file"     then typeResult = objType == "file"
+            if rightTok == "null"     then typeResult = globals.object == null
+            if typeResult != null and opStr == "!=" then typeResult = not typeResult
+        end if
+        if typeResult != null then
+            if negCmp then typeResult = not typeResult
+            return typeResult
+        end if
+        leftVal  = resolve(leftTok)
+        rightVal = resolve(rightTok)
+        result = false
+        if opStr == "==" then result = leftVal == rightVal
+        if opStr == "!=" then result = leftVal != rightVal
+        if opStr == "<"  then result = leftVal.to_int < rightVal.to_int
+        if opStr == ">"  then result = leftVal.to_int > rightVal.to_int
+        if opStr == "<=" then result = leftVal.to_int <= rightVal.to_int
+        if opStr == ">=" then result = leftVal.to_int >= rightVal.to_int
+        if negCmp then result = not result
+        return result
+    end if
+
+    // "stackchanged @a" — true if the CONTENTS of the object stack
+    // (not just its count — see "stack == @a" above for that) differ
+    // from what "stack | clip @a" captured earlier. Compares each
+    // position by object identity, same as the != checks already used
+    // elsewhere in this codebase for live shell/computer objects
+    // (e.g. LibScan's lsCompObj != lsObj). A clip that was never taken
+    // counts as "changed" — nothing to compare against yet.
+    scNeg = false
+    scTokens = tokens
+    if tokens.len > 0 and (tokens[0] == "not" or tokens[0] == "no") then
+        scNeg = true
+        scTokens = tokens[1:]
+    end if
+    if scTokens.len >= 2 and scTokens[0] == "stackchanged" then
+        scClipTok = scTokens[1]
+        scClipName = scClipTok
+        if scClipTok.len > 1 and scClipTok[0:1] == "@" then scClipName = scClipTok[1:]
+        gcoStackDiff = get_custom_object
+        scChanged = true
+        if gcoStackDiff.hasIndex("objClips") and gcoStackDiff.objClips.hasIndex(scClipName) then
+            scSnapshot = gcoStackDiff.objClips[scClipName]
+            if objectStack.len == scSnapshot.len then
+                scChanged = false
+                scIdx = 0
+                while scIdx < objectStack.len
+                    if objectStack[scIdx] != scSnapshot[scIdx] then
+                        scChanged = true
+                        break
+                    end if
+                    scIdx = scIdx + 1
+                end while
+            end if
+        end if
+        if scNeg then return not scChanged
+        return scChanged
+    end if
+
+    neg = false
+    i = 0
+    if tokens[0] == "not" or tokens[0] == "no" then
+        neg = true
+        i = 1
+    end if
+    if i >= tokens.len then return neg
+
+    cond = tokens[i]
+    result = false
+
+    if cond == "root"     then result = globals.object != null and typeof(globals.object) == "shell" and IsRoot(globals.object)
+    if cond == "guest"    then result = globals.object != null and typeof(globals.object) == "shell" and not IsRoot(globals.object)
+    if cond == "shell"    then result = typeof(globals.object) == "shell"
+    if cond == "computer" then result = typeof(globals.object) == "computer"
+    if cond == "object"   then result = globals.object != null
+    if cond == "stack"    then result = objectStack.len > 0
+    // stackanyroot/stackallroot/stackanyguest/stackallguest — root
+    // status across the WHOLE stack, unlike plain root/guest above
+    // which only look at the single currently-held object. Uses
+    // GetUserCtx (handles both shell and computer objects) rather
+    // than IsRoot (shell-only — see the "shell == root" comparison
+    // branch above for the same reasoning). Empty stack is false for
+    // all four — no vacuous-truth "all zero items are root".
+    if cond == "stackanyroot" or cond == "stackallroot" or cond == "stackanyguest" or cond == "stackallguest" then
+        if objectStack.len == 0 then
+            result = false
+        else
+            stackRootCount = 0
+            for stackItem in objectStack
+                stackItemType = typeof(stackItem)
+                if (stackItemType == "shell" or stackItemType == "computer") and GetUserCtx(stackItem) == "root" then
+                    stackRootCount = stackRootCount + 1
+                end if
+            end for
+            if cond == "stackanyroot" then result = stackRootCount > 0
+            if cond == "stackallroot" then result = stackRootCount == objectStack.len
+            if cond == "stackanyguest" then result = stackRootCount < objectStack.len
+            if cond == "stackallguest" then result = stackRootCount == 0
+        end if
+    end if
+    // stackanycomputer/stackallcomputer/stackanyshell/stackallshell —
+    // object TYPE across the whole stack, same any/all pattern as the
+    // root/guest ones above. This is only for a yes/no check ("does
+    // the stack have one at all") — to actually act on just the
+    // computer (or shell) objects, stackpick/stackfor already support
+    // the plain "computer"/"shell" condition today: e.g.
+    // "stackfor computer | <cmd>" runs <cmd> against every computer
+    // object on the stack, no new command needed for that part.
+    if cond == "stackanycomputer" or cond == "stackallcomputer" or cond == "stackanyshell" or cond == "stackallshell" then
+        if objectStack.len == 0 then
+            result = false
+        else
+            stackComputerCount = 0
+            for stackTypeItem in objectStack
+                if typeof(stackTypeItem) == "computer" then stackComputerCount = stackComputerCount + 1
+            end for
+            if cond == "stackanycomputer" then result = stackComputerCount > 0
+            if cond == "stackallcomputer" then result = stackComputerCount == objectStack.len
+            if cond == "stackanyshell" then result = stackComputerCount < objectStack.len
+            if cond == "stackallshell" then result = stackComputerCount == 0
+        end if
+    end if
+    if cond == "failed" or cond == "pipefailed" then result = pipeFailed
+    if cond == "true" or cond == "__true__" then result = true
+    if cond == "false"    then result = false
+    if cond == "target" or cond == "pt" then result = publicTarget != ""
+    if cond == "clip"     then result = false
+    if cond.len > 1 and cond[0:1] == "@" then
+        vn = cond[1:]
+        gcoC = get_custom_object
+        if pipeVars.hasIndex(vn) and pipeVars[vn] != "" then
+            result = true
+        else if gcoC.hasIndex("clips") and gcoC.clips.hasIndex(vn) and gcoC.clips[vn] != "" then
+            result = true
+        end if
+    end if
+
+    if neg then return not result
+    return result
+end function
+
+// ── MacroCall ─────────────────────────────────────────────────────
+MacroCall = function(name, args)
+    if typeof(name) != "string" then return null
+    gco = get_custom_object
+    if not gco.hasIndex("macroCallStack") then gco.macroCallStack = []
+    if gco.macroCallStack.len > 20 then
+        print(c.red + "  [ERROR] macro call depth exceeded" + c.ennd)
+        return null
+    end if
+    gco.macroCallStack.push({"name": name, "args": args})
+
+    if gco.hasIndex("macroFuncs") and gco.macroFuncs.hasIndex(name) then
+        fn = gco.macroFuncs[name]
+        compiled = CompileMacroLines(fn["rawLines"], args, false)
+        for ln in compiled
+            globals.macroQueue.push(ln)
+        end for
+        globals.macroQueue.push("__funcend__")
+        gco.macroCallStack.pop
+        return pipeResult
+    end if
+
+    macDir = "/root/ai/mac"
+    f = myComp.File(macDir + "/" + name + ".txt")
+    if not f then f = myComp.File(macDir + "/" + name)
+    if not f then
+        print(c.yellow + "  macro '" + name + "' not found" + c.ennd)
+        gco.macroCallStack.pop
+        return null
+    end if
+    lines = f.get_content.split(char(10))
+    compiled = CompileMacroLines(lines, args, false)
+    for ln in compiled
+        globals.macroQueue.push(ln)
+    end for
+    globals.macroQueue.push("__funcend__")
+    gco.macroCallStack.pop
+    return pipeResult
+end function
+
+// ── MacroRef ──────────────────────────────────────────────────────
+MacroRef = function
+    print(char(10) + c.cyan + "<b>PHANTOM MACRO SYSTEM" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+    print(char(10) + c.gold + "<b>BASICS" + c.ennd)
+    print(c.white + "  mac <name> [args]          Run macro from /root/ai/mac/" + c.ennd)
+    print(c.white + "  mac list / show <name>     List or preview macros" + c.ennd)
+    print(char(10) + c.gold + "<b>VARIABLES" + c.ennd)
+    print(c.white + "  clip @var value            Set variable" + c.ennd)
+    print(c.white + "  @var                       Expand variable in command" + c.ennd)
+    print(c.white + "  $1 $2 ... $9               Macro arguments" + c.ennd)
+    print(char(10) + c.gold + "<b>FLOW" + c.ennd)
+    print(c.white + "  cmd1 | cmd2                Pipe (stop on fail)" + c.ennd)
+    print(c.white + "  cmd1 && cmd2               AND (stop on fail)" + c.ennd)
+    print(c.white + "  cmd1 ; cmd2                Always run both" + c.ennd)
+    print(char(10) + c.gold + "<b>CONDITIONALS" + c.ennd)
+    print(c.white + "  if <cond> then <cmd>       One-liner (also works with |)" + c.ennd)
+    print(c.white + "  if <cond>                  Block conditional (use endif)" + c.ennd)
+    print(c.white + "  elif <cond> / else / endif" + c.ennd)
+    print(c.grey + "    Conds: root shell object stack target @var failed" + c.ennd)
+    print(c.grey + "    Ops:   == != < > <= >= and or not" + c.ennd)
+    print(char(10) + c.gold + "<b>LOOPS" + c.ennd)
+    print(c.white + "  while <cond> [max N]       Loop while condition" + c.ennd)
+    print(c.white + "  until <cond> [max N]       Loop until condition" + c.ennd)
+    print(c.white + "  repeat N                   Repeat N times" + c.ennd)
+    print(c.white + "  for @var in @list          Iterate comma-list" + c.ennd)
+    print(c.white + "  for @var in range(N,M)     Iterate N..M" + c.ennd)
+    print(c.white + "  endfor / endwhile / enduntil / endrepeat" + c.ennd)
+    print(c.white + "  break / continue" + c.ennd)
+    print(char(10) + c.gold + "<b>SWITCH" + c.ennd)
+    print(c.white + "  switch @var                Dispatch on value" + c.ennd)
+    print(c.white + "  case <val> / default / endswitch" + c.ennd)
+    print(char(10) + c.gold + "<b>ERROR HANDLING" + c.ennd)
+    print(c.white + "  try / catch [@err] / endtry" + c.ennd)
+    print(c.white + "  _throw <message>           Throw error to catch" + c.ennd)
+    print(char(10) + c.gold + "<b>FUNCTIONS" + c.ennd)
+    print(c.white + "  func <name>([p1,p2,...])   Define inline function" + c.ennd)
+    print(c.white + "  endfunc / _return <value>" + c.ennd)
+    print(c.white + "  call <name> [args]         Call macro or func" + c.ennd)
+    print(char(10) + c.gold + "<b>MENUS" + c.ennd)
+    print(c.white + "  menu <title>               Interactive choice menu" + c.ennd)
+    print(c.white + "  <label> | <command>        Menu item" + c.ennd)
+    print(c.white + "  endmenu" + c.ennd)
+    print(char(10) + c.gold + "<b>MISC" + c.ennd)
+    print(c.white + "  sleep N                    Wait N seconds" + c.ennd)
+    print(c.white + "  pause                      Wait for Enter" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+end function
+
+// ── CompileMacroLines ────────────────────────────────────────────
+// Separators:
+//   char(1) = field separator (all block types)
+//   char(2) = if/switch body lines
+//   char(3) = menu item separator
+//   char(4) = if branch / switch case separator
+//   char(6) = while/repeat body lines
+//   char(7) = for body lines
+//   char(8) = try body lines
+CompileMacroLines = function(lines, argList, warnUnresolved)
+    if warnUnresolved == null then warnUnresolved = false
+    dollarN = ["$1","$2","$3","$4","$5","$6","$7","$8","$9"]
+    processedLines = []
+
+    ifStack     = []
+    loopStack   = []
+    forStack    = []
+    tryStack    = []
+    switchStack = []
+    funcStack   = []
+    menuStack   = []
+    blockTypeOrder = []
+
+    pushLineSingle = function(ln)
+        if blockTypeOrder.len == 0 then
+            processedLines.push(ln)
+            return
+        end if
+        top = blockTypeOrder[blockTypeOrder.len - 1]
+        if top == "if" then
+            frame = ifStack[ifStack.len - 1]
+            if frame["inElse"] then
+                frame["elseBody"].push(ln)
+            else
+                frame["branches"][frame["branches"].len - 1]["body"].push(ln)
+            end if
+        else if top == "loop" then
+            loopStack[loopStack.len - 1]["body"].push(ln)
+        else if top == "for" then
+            forStack[forStack.len - 1]["body"].push(ln)
+        else if top == "try" then
+            frame = tryStack[tryStack.len - 1]
+            if frame["inCatch"] then
+                frame["catchBody"].push(ln)
+            else
+                frame["tryBody"].push(ln)
+            end if
+        else if top == "switch" then
+            frame = switchStack[switchStack.len - 1]
+            if frame["inDefault"] then
+                frame["defaultBody"].push(ln)
+            else if frame["cases"].len > 0 then
+                frame["cases"][frame["cases"].len - 1]["body"].push(ln)
+            end if
+        else if top == "func" then
+            funcStack[funcStack.len - 1]["rawLines"].push(ln)
+        else if top == "menu" then
+            pipePos = ln.indexOf("|")
+            if pipePos != null then
+                lbl = ln[:pipePos]
+                while lbl.len > 0 and lbl[-1] == " "
+                    lbl = lbl[:-1]
+                end while
+                cmd = ln[pipePos+1:]
+                while cmd.len > 0 and cmd[0] == " "
+                    cmd = cmd[1:]
+                end while
+                menuStack[menuStack.len - 1]["items"].push(lbl + char(3) + cmd)
+            end if
+        end if
+    end function
+
+    pushLine = function(ln)
+        if ln.indexOf(" ; ") != null then
+            segs = ln.split(" ; ")
+            i = 0
+            while i < segs.len
+                if segs[i] != "" then pushLineSingle(segs[i])
+                if i < segs.len - 1 then pushLineSingle("__clearfail__")
+                i = i + 1
+            end while
+            return
+        end if
+        if ln.indexOf(" && ") != null then
+            segs = ln.split(" && ")
+            for seg in segs
+                if seg != "" then pushLineSingle(seg)
+            end for
+            return
+        end if
+        pushLineSingle(ln)
+    end function
+
+    for line in lines
+        line = line.split(char(9)).join(" ")
+        line = line.split(char(13)).join("")
+        parts = []
+        for p in line.split(" ")
+            if p != "" then parts.push(p)
+        end for
+        if parts.len == 0 or parts[0][0:2] == "//" then continue
+
+        j = 0
+        while j < argList.len and j < dollarN.len
+            pat = dollarN[j]
+            val = argList[j]
+            pos = line.indexOf(pat)
+            while pos != null
+                line = line[:pos] + val + line[pos + 2:]
+                pos = line.indexOf(pat)
+            end while
+            j = j + 1
+        end while
+        if warnUnresolved then
+            j = argList.len
+            while j < dollarN.len
+                pat = dollarN[j]
+                if line.indexOf(pat) != null then
+                    print(c.yellow + "  warning: " + pat + " used but not passed" + c.ennd)
+                    pos = line.indexOf(pat)
+                    while pos != null
+                        line = line[:pos] + line[pos + 2:]
+                        pos = line.indexOf(pat)
+                    end while
+                end if
+                j = j + 1
+            end while
+        end if
+
+        parts = []
+        for p in line.split(" ")
+            if p != "" then parts.push(p)
+        end for
+        if parts.len == 0 then continue
+        kw = parts[0]
+
+        // ── func short-circuit ────────────────────────────────────
+        if blockTypeOrder.len > 0 and blockTypeOrder[blockTypeOrder.len - 1] == "func" then
+            if kw == "endfunc" then
+                frame = funcStack.pop
+                blockTypeOrder.pop
+                gcoF = get_custom_object
+                if not gcoF.hasIndex("macroFuncs") then gcoF.macroFuncs = {}
+                gcoF.macroFuncs[frame["name"]] = {"params": frame["params"], "rawLines": frame["rawLines"]}
+                print(c.grey + "  func '" + frame["name"] + "' defined" + c.ennd)
+            else
+                funcStack[funcStack.len - 1]["rawLines"].push(line)
+            end if
+            continue
+        end if
+
+        // ── menu short-circuit ────────────────────────────────────
+        if blockTypeOrder.len > 0 and blockTypeOrder[blockTypeOrder.len - 1] == "menu" then
+            if kw == "endmenu" then
+                frame = menuStack.pop
+                blockTypeOrder.pop
+                enc = "__menu__" + char(1) + frame["title"] + char(1) + frame["items"].join(char(2))
+                pushLine(enc)
+            else
+                pipePos = line.indexOf("|")
+                if pipePos != null then
+                    lbl = line[:pipePos]
+                    while lbl.len > 0 and lbl[-1] == " "
+                        lbl = lbl[:-1]
+                    end while
+                    cmd = line[pipePos+1:]
+                    while cmd.len > 0 and cmd[0] == " "
+                        cmd = cmd[1:]
+                    end while
+                    menuStack[menuStack.len - 1]["items"].push(lbl + char(3) + cmd)
+                end if
+            end if
+            continue
+        end if
+
+        if kw == "func" then
+            funcDef = parts[1:].join(" ")
+            parenIdx = funcDef.indexOf("(")
+            params = []
+            if parenIdx != null then
+                funcName = funcDef[:parenIdx]
+                closeIdx = funcDef.indexOf(")")
+                paramStr = ""
+                if closeIdx != null then paramStr = funcDef[parenIdx+1:closeIdx]
+                if paramStr != "" then
+                    for p in paramStr.split(",")
+                        t = p
+                        while t.len > 0 and t[0] == " "
+                            t = t[1:]
+                        end while
+                        while t.len > 0 and t[-1] == " "
+                            t = t[:-1]
+                        end while
+                        if t != "" then params.push(t)
+                    end for
+                end if
+            else
+                funcName = parts[1]
+            end if
+            funcStack.push({"name": funcName, "params": params, "rawLines": []})
+            blockTypeOrder.push("func")
+
+        else if kw == "try" then
+            tryStack.push({"tryBody": [], "catchVar": "", "catchBody": [], "inCatch": false})
+            blockTypeOrder.push("try")
+
+        else if kw == "catch" then
+            if tryStack.len == 0 then
+                print(c.yellow + "  warning: catch without try" + c.ennd)
+            else
+                frame = tryStack[tryStack.len - 1]
+                if parts.len >= 2 then frame["catchVar"] = parts[1] else frame["catchVar"] = ""
+                frame["inCatch"] = true
+            end if
+
+        else if kw == "endtry" then
+            if tryStack.len == 0 then
+                print(c.yellow + "  warning: endtry without try" + c.ennd)
+            else
+                frame = tryStack.pop
+                blockTypeOrder.pop
+                enc = "__try__" + char(1) + frame["catchVar"] + char(1) + frame["tryBody"].join(char(8)) + char(1) + frame["catchBody"].join(char(8))
+                pushLine(enc)
+            end if
+
+        else if kw == "switch" then
+            switchVal = parts[1:].join(" ")
+            switchStack.push({"value": switchVal, "cases": [], "defaultBody": [], "inDefault": false})
+            blockTypeOrder.push("switch")
+
+        else if kw == "case" then
+            if switchStack.len == 0 then
+                print(c.yellow + "  warning: case without switch" + c.ennd)
+            else
+                frame = switchStack[switchStack.len - 1]
+                caseVal = parts[1:].join(" ")
+                frame["cases"].push({"val": caseVal, "body": []})
+                frame["inDefault"] = false
+            end if
+
+        else if kw == "default" then
+            if switchStack.len == 0 then
+                print(c.yellow + "  warning: default without switch" + c.ennd)
+            else
+                switchStack[switchStack.len - 1]["inDefault"] = true
+            end if
+
+        else if kw == "endswitch" then
+            if switchStack.len == 0 then
+                print(c.yellow + "  warning: endswitch without switch" + c.ennd)
+            else
+                frame = switchStack.pop
+                blockTypeOrder.pop
+                enc = "__switch__" + char(1) + frame["value"]
+                for cas in frame["cases"]
+                    enc = enc + char(4) + cas["val"] + char(1) + cas["body"].join(char(2))
+                end for
+                enc = enc + char(4) + "__default__" + char(1) + frame["defaultBody"].join(char(2))
+                pushLine(enc)
+            end if
+
+        else if kw == "if" then
+            condParts = parts[1:]
+            // one-liner: if <cond> then <cmd>  or  if <cond> | <cmd>
+            // only one-liner when there's actually a command after the separator
+            thenIdx = condParts.indexOf("then")
+            pipeIdx = condParts.indexOf("|")
+            sepIdx = null
+            if thenIdx != null and thenIdx < condParts.len - 1 then sepIdx = thenIdx
+            if pipeIdx != null and pipeIdx < condParts.len - 1 then
+                if sepIdx == null or pipeIdx < sepIdx then sepIdx = pipeIdx
+            end if
+            if sepIdx != null then
+                cond = condParts[:sepIdx].join(" ")
+                cmd  = condParts[sepIdx+1:].join(" ")
+                if cmd != "" then
+                    enc = "__if__" + char(1) + cond + char(1) + cmd + char(1) + "__else__" + char(1)
+                    pushLine(enc)
+                else
+                    if condParts.len > 0 and condParts[-1] == "then" then condParts = condParts[:-1]
+                    condStr = condParts.join(" ")
+                    branch = {"cond": condStr, "body": []}
+                    ifStack.push({"branches": [branch], "elseBody": [], "inElse": false})
+                    blockTypeOrder.push("if")
+                end if
+            else
+                if condParts.len > 0 and condParts[-1] == "then" then condParts = condParts[:-1]
+                condStr = condParts.join(" ")
+                branch = {"cond": condStr, "body": []}
+                ifStack.push({"branches": [branch], "elseBody": [], "inElse": false})
+                blockTypeOrder.push("if")
+            end if
+
+        else if kw == "elif" then
+            if ifStack.len == 0 then
+                print(c.yellow + "  warning: elif without if" + c.ennd)
+            else
+                frame = ifStack[ifStack.len - 1]
+                condParts = parts[1:]
+                thenIdx = condParts.indexOf("then")
+                pipeIdx = condParts.indexOf("|")
+                sepIdx = null
+                if thenIdx != null and thenIdx < condParts.len - 1 then sepIdx = thenIdx
+                if pipeIdx != null and pipeIdx < condParts.len - 1 then
+                    if sepIdx == null or pipeIdx < sepIdx then sepIdx = pipeIdx
+                end if
+                if sepIdx != null then
+                    cond = condParts[:sepIdx].join(" ")
+                    frame["branches"].push({"cond": cond, "body": [condParts[sepIdx+1:].join(" ")]})
+                    frame["inElse"] = false
+                else
+                    if condParts.len > 0 and condParts[-1] == "then" then condParts = condParts[:-1]
+                    frame["branches"].push({"cond": condParts.join(" "), "body": []})
+                    frame["inElse"] = false
+                end if
+            end if
+
+        else if kw == "else" then
+            if ifStack.len == 0 then
+                print(c.yellow + "  warning: else without if" + c.ennd)
+            else
+                ifStack[ifStack.len - 1]["inElse"] = true
+            end if
+
+        else if kw == "endif" then
+            if ifStack.len == 0 then
+                print(c.yellow + "  warning: endif without if" + c.ennd)
+            else
+                frame = ifStack.pop
+                blockTypeOrder.pop
+                enc = "__if__"
+                for branch in frame["branches"]
+                    enc = enc + char(1) + branch["cond"] + char(1) + branch["body"].join(char(2))
+                end for
+                enc = enc + char(1) + "__else__" + char(1) + frame["elseBody"].join(char(2))
+                pushLine(enc)
+            end if
+
+        else if kw == "for" then
+            if parts.len >= 4 and parts[2] == "in" then
+                forVar = parts[1]
+                if forVar[0:1] == "@" then forVar = forVar[1:]
+                forExpr = parts[3:].join(" ")
+                forStack.push({"var": forVar, "expr": forExpr, "body": []})
+                blockTypeOrder.push("for")
+            else
+                pushLine(line)
+            end if
+
+        else if kw == "endfor" then
+            if blockTypeOrder.len > 0 and blockTypeOrder[blockTypeOrder.len - 1] == "for" then
+                frame = forStack.pop
+                blockTypeOrder.pop
+                enc = "__for__" + char(1) + frame["var"] + char(1) + frame["expr"] + char(1) + frame["body"].join(char(7))
+                pushLine(enc)
+            else
+                print(c.yellow + "  warning: endfor without for" + c.ennd)
+            end if
+
+        else if kw == "while" or kw == "until" or kw == "repeat" then
+            maxIter = 999999
+            condParts = parts[1:]
+            if condParts.len >= 2 and condParts[-2] == "max" then
+                maxIter = condParts[-1].to_int
+                condParts = condParts[:-2]
+            end if
+            if kw == "repeat" then
+                maxIter = condParts[0].to_int
+                condStr = "__true__"
+            else
+                condStr = condParts.join(" ")
+                if kw == "until" then condStr = "not " + condStr
+            end if
+            loopStack.push({"cond": condStr, "body": [], "max": maxIter})
+            blockTypeOrder.push("loop")
+
+        else if kw == "endwhile" or kw == "enduntil" or kw == "endrepeat" then
+            if blockTypeOrder.len == 0 or blockTypeOrder[blockTypeOrder.len - 1] != "loop" then
+                print(c.yellow + "  warning: " + kw + " without matching loop" + c.ennd)
+            else
+                frame = loopStack.pop
+                blockTypeOrder.pop
+                enc = "__while__" + char(1) + frame["cond"] + char(1) + frame["max"] + char(1) + frame["body"].join(char(6))
+                pushLine(enc)
+            end if
+
+        else if kw == "menu" then
+            menuStack.push({"title": parts[1:].join(" "), "items": []})
+            blockTypeOrder.push("menu")
+
+        else
+            pushLine(line)
+        end if
+    end for
+
+    if blockTypeOrder.len > 0 then
+        print(c.yellow + "  warning: " + blockTypeOrder.len + " unclosed block(s): " + blockTypeOrder.join(", ") + c.ennd)
+    end if
+    return processedLines
+end function
+
+// ── HandleMenuLine ────────────────────────────────────────────────
+HandleMenuLine = function(line)
+    segs = line.split(char(1))
+    menuTitle = segs[1]
+    menuItems = []
+    if segs.len > 2 and segs[2] != "" then menuItems = segs[2].split(char(2))
+    print(char(10))
+    if menuTitle != "" then print(c.cyan + "<b>" + menuTitle + c.ennd)
+    print(c.grey + "─────────────────────────" + c.ennd)
+    for mitem in menuItems
+        iparts = mitem.split(char(3))
+        if iparts.len >= 1 then print(c.white + "  " + iparts[0] + c.ennd)
+    end for
+    print(c.grey + "─────────────────────────" + c.ennd)
+    mchoice = user_input(c.gold + "Choose: " + c.ennd, false, false)
+    mfound = false
+    for mitem in menuItems
+        iparts = mitem.split(char(3))
+        if iparts.len < 2 then continue
+        dispToks = iparts[0].split(" ")
+        firstTok = ""
+        if dispToks.len > 0 then firstTok = dispToks[0]
+        if firstTok == mchoice or iparts[0] == mchoice then
+            globals.macroQueue = [iparts[1]] + globals.macroQueue
+            mfound = true
+        end if
+        if mfound then break
+    end for
+    if not mfound then
+        print(c.yellow + "  invalid choice — try again" + c.ennd)
+        globals.macroQueue = [line] + globals.macroQueue
+    end if
+end function
+
+// ── HandleWhileLine ───────────────────────────────────────────────
+HandleWhileLine = function(line)
+    segs = SplitFirst(line, char(1), 3)
+    condStr   = segs[1]
+    remaining = segs[2].to_int
+    body = []
+    if segs.len > 3 and segs[3] != "" then body = segs[3].split(char(6))
+    if remaining <= 0 then
+        print(c.yellow + "  [" + macroName + "] loop: reached max " + segs[2] + " iterations" + c.ennd)
+    else if EvalCondition(condStr.split(" ")) then
+        newEntry = "__while__" + char(1) + condStr + char(1) + (remaining - 1) + char(1) + body.join(char(6))
+        globals.macroQueue = body + [newEntry] + globals.macroQueue
+    else
+        print(c.grey + "  [" + macroName + "] loop: condition false — exiting" + c.ennd)
+    end if
+end function
+
+// ── HandleIfLine ──────────────────────────────────────────────────
+HandleIfLine = function(line)
+    segs = line.split(char(1))
+    i = 1
+    matched = false
+    while i < segs.len - 1 and not matched
+        cond = segs[i]
+        body = segs[i + 1]
+        if cond == "__else__" then
+            i = segs.len
+        else
+            condTokens = cond.split(" ")
+            if condTokens.len > 0 and condTokens[-1] == "then" then
+                condTokens = condTokens[:-1]
+            end if
+            if EvalCondition(condTokens) then
+                matched = true
+                if body != "" then
+                    globals.macroQueue = body.split(char(2)) + globals.macroQueue
+                end if
+            end if
+            i = i + 2
+        end if
+    end while
+    if not matched then
+        elseBody = segs[segs.len - 1]
+        if elseBody != "" then
+            globals.macroQueue = elseBody.split(char(2)) + globals.macroQueue
+        end if
+    end if
+end function
+
+// ── HandleTryLine ─────────────────────────────────────────────────
+HandleTryLine = function(line)
+    segs = SplitFirst(line, char(1), 3)
+    catchVar  = segs[1]
+    tryBody   = segs[2]
+    catchBody = segs[3]
+    globals.macroCatchVar  = catchVar
+    globals.macroCatchBody = catchBody
+    globals.macroInTry     = true
+    tryLines = []
+    if tryBody != "" then tryLines = tryBody.split(char(8))
+    catchSentinel = "__catch__" + char(1) + catchVar + char(1) + catchBody
+    globals.macroQueue = tryLines + [catchSentinel, "__tryend__"] + globals.macroQueue
+end function
+
+// ── HandleCatchLine ───────────────────────────────────────────────
+HandleCatchLine = function(line)
+    globals.macroInTry = false
+    if globals.macroQueue.len > 0 and globals.macroQueue[0] == "__tryend__" then
+        globals.macroQueue = globals.macroQueue[1:]
+    end if
+end function
+
+// ── HandleTryendLine ─────────────────────────────────────────────
+HandleTryendLine = function()
+    globals.macroInTry    = false
+    globals.macroCatchVar  = ""
+    globals.macroCatchBody = ""
+end function
+
+// ── HandleSwitchLine ─────────────────────────────────────────────
+HandleSwitchLine = function(line)
+    segs = line.split(char(4))
+    valParts = SplitFirst(segs[0], char(1), 1)
+    switchVal = valParts[1]
+    if switchVal.len > 1 and switchVal[0:1] == "@" then
+        vn = switchVal[1:]
+        if pipeVars.hasIndex(vn) then switchVal = pipeVars[vn]
+    end if
+
+    i = 1
+    matched = false
+    while i < segs.len and not matched
+        caseParts = SplitFirst(segs[i], char(1), 1)
+        caseVal  = caseParts[0]
+        caseBody = ""
+        if caseParts.len > 1 then caseBody = caseParts[1]
+        if caseVal == "__default__" then
+            i = i + 1
+            continue
+        end if
+        resolvedCase = caseVal
+        if resolvedCase.len > 1 and resolvedCase[0:1] == "@" then
+            vn = resolvedCase[1:]
+            if pipeVars.hasIndex(vn) then resolvedCase = pipeVars[vn]
+        end if
+        if resolvedCase == switchVal then
+            matched = true
+            if caseBody != "" then
+                globals.macroQueue = caseBody.split(char(2)) + globals.macroQueue
+            end if
+        end if
+        i = i + 1
+    end while
+
+    if not matched then
+        for seg in segs
+            dp = SplitFirst(seg, char(1), 1)
+            if dp[0] == "__default__" and dp.len > 1 and dp[1] != "" then
+                globals.macroQueue = dp[1].split(char(2)) + globals.macroQueue
+            end if
+        end for
+    end if
+end function
+
+// ── HandleForLine ─────────────────────────────────────────────────
+HandleForLine = function(line)
+    segs = SplitFirst(line, char(1), 3)
+    varName = segs[1]
+    expr    = segs[2]
+    body    = segs[3]
+
+    // object-list clip (e.g. from "stack | clip @b")? — iterate live
+    // objects, setting globals.object each round (same idea stackfor
+    // already uses), instead of string-substituting varName. Can't
+    // encode live objects back into the __for__ line's own text the
+    // way remaining string items get comma-joined in below, so the
+    // remainder rides in a side-channel global between __forobj__
+    // pops instead (see HandleForObjLine).
+    if expr.len > 1 and expr[0:1] == "@" then
+        vnObj = expr[1:]
+        gcoO = get_custom_object
+        if gcoO.hasIndex("objClips") and gcoO.objClips.hasIndex(vnObj) and gcoO.objClips[vnObj].len > 0 then
+            objItems = gcoO.objClips[vnObj]
+            objBodyLines = []
+            if body != "" then objBodyLines = body.split(char(7))
+            globals.object = objItems[0]
+            if objItems.len > 1 then
+                globals.macroForObjItems = objItems[1:]
+                globals.macroForObjBody  = body
+                globals.macroForObjVar   = varName
+                globals.macroQueue = objBodyLines + ["__forobj__"] + globals.macroQueue
+            else
+                globals.macroQueue = objBodyLines + globals.macroQueue
+            end if
+            return
+        end if
+    end if
+
+    items = []
+    if expr.len >= 6 and expr[:6] == "range(" then
+        inner = expr[6:]
+        closeIdx = inner.indexOf(")")
+        if closeIdx != null then inner = inner[:closeIdx]
+        rangeParts = inner.split(",")
+        if rangeParts.len >= 2 then
+            startN = rangeParts[0].to_int
+            endN   = rangeParts[1].to_int
+            k = startN
+            while k <= endN
+                items.push("" + k)
+                k = k + 1
+            end while
+        end if
+    else if expr.len > 1 and expr[0:1] == "@" then
+        vn = expr[1:]
+        val = ""
+        if pipeVars.hasIndex(vn) then val = pipeVars[vn]
+        if val != "" then items = val.split(",")
+    else
+        if expr != "" then items = expr.split(",")
+    end if
+
+    if items.len == 0 then return
+
+    firstItem = items[0]
+    globals.pipeVars[varName] = firstItem
+    gcoF = get_custom_object
+    if not gcoF.hasIndex("clips") then gcoF.clips = {}
+    gcoF.clips[varName] = firstItem
+
+    bodyLines = []
+    if body != "" then bodyLines = body.split(char(7))
+
+    if items.len > 1 then
+        remaining = items[1:]
+        nextEnc = "__for__" + char(1) + varName + char(1) + remaining.join(",") + char(1) + body
+        globals.macroQueue = bodyLines + [nextEnc] + globals.macroQueue
+    else
+        // last item — no __for__ continuation to act as a failure-
+        // recovery anchor, so push __forend__ instead (a pure no-op
+        // during normal execution, see phantom.src's dispatch) so
+        // HandleMacroPipeFail always has something to skip to instead
+        // of falling through to "abort the whole macro"
+        globals.macroQueue = bodyLines + ["__forend__"] + globals.macroQueue
+    end if
+end function
+
+// ── HandleForObjLine ────────────────────────────────────────────────
+// Continuation for an object-list "for @x in @objclip" loop — pops the
+// next item off the side-channel globals.macroForObjItems (seeded by
+// HandleForLine above) and re-queues the same body for it.
+HandleForObjLine = function()
+    items = globals.macroForObjItems
+    if items.len == 0 then return
+    body = globals.macroForObjBody
+    bodyLines = []
+    if body != "" then bodyLines = body.split(char(7))
+    globals.object = items[0]
+    if items.len > 1 then
+        globals.macroForObjItems = items[1:]
+        globals.macroQueue = bodyLines + ["__forobj__"] + globals.macroQueue
+    else
+        globals.macroForObjItems = []
+        globals.macroQueue = bodyLines + ["__forend__"] + globals.macroQueue
+    end if
+end function
+
+// ── HandleFuncend ─────────────────────────────────────────────────
+HandleFuncend = function()
+end function
+
+// ── CheckMacroComplete ───────────────────────────────────────────
+CheckMacroComplete = function()
+    if macroName != "" and macroQueue.len == 0 and pipeQueue.len == 0 and foreachBody == "" then
+        print(c.cyan + "<b>macro '" + macroName + "' done" + c.ennd)
+        globals.macroName    = ""
+        globals.macroArgList = []
+        globals.macroTrace   = false
+    end if
+end function
+
+// ── HandleMacroPipeFail ──────────────────────────────────────────
+HandleMacroPipeFail = function()
+    catchIdx = null
+    k = 0
+    while k < macroQueue.len
+        if macroQueue[k].len >= 9 and macroQueue[k][:9] == "__catch__" then
+            catchIdx = k
+            k = macroQueue.len
+        end if
+        k = k + 1
+    end while
+    if catchIdx != null then
+        catchLine = macroQueue[catchIdx]
+        segs = SplitFirst(catchLine, char(1), 2)
+        catchVar  = segs[1]
+        catchBody = ""
+        if segs.len > 2 then catchBody = segs[2]
+        globals.macroQueue = macroQueue[catchIdx + 1:]
+        if globals.macroQueue.len > 0 and globals.macroQueue[0] == "__tryend__" then
+            globals.macroQueue = globals.macroQueue[1:]
+        end if
+        if catchVar != "" then
+            throwMsg = ""
+            if globals.hasIndex("throwMessage") then throwMsg = globals.throwMessage
+            globals.pipeVars[catchVar] = throwMsg
+            gcoC = get_custom_object
+            if not gcoC.hasIndex("clips") then gcoC.clips = {}
+            gcoC.clips[catchVar] = throwMsg
+        end if
+        if catchBody != "" then
+            globals.macroQueue = catchBody.split(char(8)) + globals.macroQueue
+        end if
+        globals.pipeFailed    = false
+        globals.throwMessage  = ""
+        globals.macroInTry    = false
+        return
+    end if
+
+    // find whichever loop-continuation marker is CLOSEST — while, for,
+    // forobj (object-list for), or forend (a for-loop's LAST item —
+    // no next iteration to jump to, but still not "abort everything").
+    // Previously a failed pipe stage inside a "for" loop had no
+    // matching recovery point here at all, so it fell straight through
+    // to the abort-the-whole-macro branch below instead of just
+    // skipping to the next iteration. __forend__ covers the remaining
+    // gap: a failure on a for-loop's FINAL item used to look identical
+    // to a genuine abort (no marker left to find, since HandleForLine
+    // only queues a __for__ continuation when another item remains) —
+    // __forend__ is pushed unconditionally as that last-item's
+    // recovery anchor instead, so a failure there just resumes
+    // whatever comes after the loop instead of wiping the rest of the
+    // macro.
+    loopIdx = null
+    isForEnd = false
+    k = 0
+    while k < macroQueue.len
+        entry = macroQueue[k]
+        if entry == "__forend__" then
+            loopIdx = k
+            isForEnd = true
+            k = macroQueue.len
+        else if (entry.len >= 9 and entry[:9] == "__while__") or (entry.len >= 7 and entry[:7] == "__for__") or entry == "__forobj__" then
+            loopIdx = k
+            k = macroQueue.len
+        end if
+        k = k + 1
+    end while
+    if loopIdx != null then
+        skipped = loopIdx
+        globals.macroQueue = macroQueue[loopIdx:]
+        globals.pipeFailed = false
+        if isForEnd then
+            if skipped > 0 then print(c.grey + "  [" + macroName + "] fail on final loop item — continuing (" + skipped + " line(s) skipped)" + c.ennd)
+        else
+            if skipped > 0 then print(c.grey + "  [" + macroName + "] fail — skip to next iteration (" + skipped + " line(s))" + c.ennd)
+        end if
+        return
+    end if
+
+    if macroName == "exec" then
+        globals.pipeFailed = false
+        print(c.grey + "  [exec] fail — skipping" + c.ennd)
+        return
+    end if
+
+    print(c.yellow + "  [" + macroName + "] pipeline fail — macro aborted (" + macroQueue.len + " line(s) skipped)" + c.ennd)
+    globals.macroQueue   = []
+    globals.macroName    = ""
+    globals.pipeFailed   = false
+    globals.macroArgList = []
+    globals.macroInTry   = false
+end function
+
+
+// ================================================================
+//  misc.src  |  phantom module  |  macro-state commands + leftovers
+// ================================================================
+// These commands directly read/write macroQueue, pipeQueue, or
+// pipeFailed as part of the main loop's control flow (rather than
+// just printing/querying), so they're grouped here instead of in
+// a topic file. They mutate globals exactly like the dispatcher
+// branches they're replacing did.
+
+// ── sleep ─────────────────────────────────────────────────────────
+CmdSleep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: sleep <seconds>")
+    else
+        secs = inp[1].to_int
+        if typeof(secs) == "number" and secs > 0 then
+            wait(secs)
+        else
+            print(c.yellow + "<b>sleep: invalid seconds" + c.ennd)
+        end if
+    end if
+end function
+CommandTable["sleep"] = @CmdSleep
+
+// ── pause ─────────────────────────────────────────────────────────
+CmdPause = function(inp)
+    msg = "Press Enter to continue..."
+    if inp.len >= 2 then msg = inp[1:].join(" ")
+    user_input(c.grey + msg + c.ennd, false, false)
+end function
+CommandTable["pause"] = @CmdPause
+
+// ── _throw ────────────────────────────────────────────────────────
+CmdThrow = function(inp)
+    msg = ""
+    if inp.len >= 2 then msg = inp[1:].join(" ")
+    globals.throwMessage = msg
+    globals.pipeFailed   = true
+    print(c.yellow + "  _throw: " + msg + c.ennd)
+end function
+CommandTable["_throw"] = @CmdThrow
+
+// ── _return ───────────────────────────────────────────────────────
+CmdReturn = function(inp)
+    val = ""
+    if inp.len >= 2 then
+        val = inp[1:].join(" ")
+        // resolve @var
+        if val.len > 1 and val[0:1] == "@" then
+            vn = val[1:]
+            if pipeVars.hasIndex(vn) then val = pipeVars[vn]
+        end if
+    end if
+    globals.pipeResult = val
+    // skip macroQueue to next __funcend__ sentinel
+    k = 0
+    while k < globals.macroQueue.len
+        if globals.macroQueue[k] == "__funcend__" then
+            globals.macroQueue = globals.macroQueue[k + 1:]
+            k = globals.macroQueue.len
+        end if
+        k = k + 1
+    end while
+end function
+CommandTable["_return"] = @CmdReturn
+
+// ── harvest --stack ───────────────────────────────────────────────
+CmdHarveststack = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>harvest --stack: stack is empty" + c.ennd)
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>HARVEST STACK  " + objectStack.len + " object(s)" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+
+    harvested = 0
+    skipped   = 0
+    savedObj  = globals.object
+
+    idx = 1
+    for obj in objectStack
+        if typeof(obj) != "shell" and typeof(obj) != "computer" then
+            print(c.grey + "  [" + idx + "] skipping — not a shell/computer" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        comp = obj
+        if typeof(obj) == "shell" then comp = obj.host_computer
+        pf = comp.File("/etc/passwd")
+        isRoot = pf != null and pf.has_permission("w")
+
+        if not isRoot then
+            print(c.yellow + "  [" + idx + "] " + comp.public_ip + " — guest only, skipping" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        print(char(10) + c.orange + "  [" + idx + "] " + comp.public_ip + c.ennd)
+        globals.object = obj
+        Harvest()
+        harvested = harvested + 1
+        idx = idx + 1
+    end for
+
+    globals.object = savedObj
+    print(char(10) + c.grey + "================================================================" + c.ennd)
+    print(c.cyan + "harvest --stack complete" + c.ennd)
+    print(c.grey + "  harvested: " + harvested + "  skipped: " + skipped + c.ennd)
+end function
+CommandTable["harveststack"] = @CmdHarveststack
+
+// ── peek --stack ────────────────────────────────────────────────────
+CmdPeekstack = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>peek --stack: stack is empty" + c.ennd)
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>PEEK STACK  " + objectStack.len + " object(s)" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+
+    peeked  = 0
+    skipped = 0
+    savedObj = globals.object
+
+    idx = 1
+    for obj in objectStack
+        if typeof(obj) != "shell" and typeof(obj) != "computer" then
+            print(c.grey + "  [" + idx + "] skipping — not a shell/computer" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        comp = obj
+        if typeof(obj) == "shell" then comp = obj.host_computer
+        pf = comp.File("/etc/passwd")
+        isRoot = pf != null and pf.has_permission("w")
+
+        if not isRoot then
+            print(c.yellow + "  [" + idx + "] " + comp.public_ip + " — guest only, skipping" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        print(char(10) + c.orange + "  [" + idx + "] " + comp.public_ip + c.ennd)
+        globals.object = obj
+        Peek()
+        peeked = peeked + 1
+        idx = idx + 1
+    end for
+
+    globals.object = savedObj
+    print(char(10) + c.grey + "================================================================" + c.ennd)
+    print(c.cyan + "peek --stack complete" + c.ennd)
+    print(c.grey + "  peeked: " + peeked + "  skipped: " + skipped + c.ennd)
+end function
+CommandTable["peekstack"] = @CmdPeekstack
+
+// ── corlog --stack ────────────────────────────────────────────────
+// Corrupts system.log on every root shell in the stack.
+// Skips the y/n prompt — use with intention.
+CmdCorlogstack = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>corlog --stack: stack is empty" + c.ennd)
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>CORLOG STACK  " + objectStack.len + " object(s)" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+
+    corrupted = 0
+    skipped   = 0
+
+    idx = 1
+    for obj in objectStack
+        comp = obj
+        if typeof(obj) == "shell" then comp = obj.host_computer
+        if typeof(comp) != "computer" then
+            print(c.grey + "  [" + idx + "] skipping — not a shell/computer" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        pf = comp.File("/etc/passwd")
+        isRoot = pf != null and pf.has_permission("w")
+        if not isRoot then
+            print(c.yellow + "  [" + idx + "] " + comp.public_ip + " — guest only, skipping" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        print(c.orange + "  [" + idx + "] " + comp.public_ip + " ..." + c.ennd)
+
+        // inline corlog — no y/n prompt
+        test = comp.touch("/home/guest", "system.log")
+        if test == false then
+            print(c.yellow + "    could not create temp file" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+        f = comp.File("/home/guest/system.log")
+        if not f then
+            print(c.yellow + "    temp file not found" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+        res = f.move("/var", "system.log")
+        if res == "permission denied" then
+            print(c.yellow + "    permission denied on /var" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+        lf = comp.File("/var/system.log")
+        if not lf or lf.is_binary then
+            print(c.yellow + "    failed to get /var/system.log" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+        lf.set_owner("root")
+        lf.set_group("root")
+        lf.chmod("o-w")
+        lf.chmod("g-w")
+        print(c.lime + "    [+] system.log corrupted" + c.ennd)
+        corrupted = corrupted + 1
+        idx = idx + 1
+    end for
+
+    print(c.grey + "================================================================" + c.ennd)
+    print(c.cyan + "corlog --stack complete" + c.ennd)
+    print(c.grey + "  corrupted: " + corrupted + "  skipped: " + skipped + c.ennd)
+end function
+CommandTable["corlogstack"] = @CmdCorlogstack
+
+// ── PlantToObject / PlantToStack ────────────────────────────────────
+// Shared upload logic for plant's two modes — single held shell vs
+// every root shell on the stack. autoroot's ChainSaw-rooting loops
+// (ops.src) call PlantToObject directly right after a fresh root
+// instead of re-implementing their own inline upload, which used to
+// duplicate this same scp+report logic with a hardcoded single lib.
+PlantToObject = function(libs, dest, mxDest=null)
+    srcDir = "/root/InsecureLibs"
+    if typeof(object) != "shell" then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>plant: need a remote shell — object is " + typeof(object) + c.ennd)
+        return
+    end if
+    for libName in libs
+        srcPath = srcDir + "/" + libName
+        if not myComp.File(srcPath) then
+            print(c.yellow + "<b>plant: " + srcPath + " not found" + c.ennd)
+            continue
+        end if
+        print(c.orange + "Planting " + libName + " to " + dest + " on target..." + c.ennd)
+        result = myShell.scp(srcPath, dest, object)
+        if typeof(result) == "string" and result != "" then
+            globals.pipeFailed = true
+            print(c.yellow + "<b>plant: " + result + c.ennd)
+        else
+            print(c.lime + "  [+] planted " + libName + " at " + dest + "/" + libName + c.ennd)
+        end if
+    end for
+    // also plant metaxploit.so from /root, same as plant always did
+    // metaxploit.so always goes to /lib so the target can load it,
+    // regardless of where -d sent the weaklibs
+    mxSrc  = "/lib/metaxploit.so"
+    if mxDest == null then mxDest = "/lib"
+    if myComp.File(mxSrc) then
+        mxResult = myShell.scp(mxSrc, mxDest, object)
+        if typeof(mxResult) == "string" and mxResult != "" then
+            print(c.yellow + "<b>plant: metaxploit.so - " + mxResult + c.ennd)
+        else
+            print(c.lime + "  [+] planted metaxploit.so at " + mxDest + "/metaxploit.so" + c.ennd)
+        end if
+    end if
+end function
+
+PlantToStack = function(libs, dest, mxDest=null)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>plant --stack: stack is empty" + c.ennd)
+        return
+    end if
+
+    srcDir = "/root/InsecureLibs"
+    missing = []
+    for lib in libs
+        if not myComp.File(srcDir + "/" + lib) then missing.push(lib)
+    end for
+    if missing.len > 0 then
+        print(c.yellow + "<b>plant --stack: not found in " + srcDir + ": " + missing.join(", ") + c.ennd)
+        if libs.len > 0 and missing.len == libs.len then return
+    end if
+
+    print(char(10) + c.cyan + "<b>PLANT --stack" + c.ennd)
+    print(c.grey + "  libs:   " + libs.join(", ") + c.ennd)
+    print(c.grey + "  dest:   " + dest + c.ennd)
+    print(c.grey + "  stack:  " + objectStack.len + " object(s)" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+
+    planted = 0
+    skipped = 0
+    idx = 1
+    for obj in objectStack
+        if typeof(obj) != "shell" then
+            print(c.grey + "  [" + idx + "] skipping — not a shell (" + typeof(obj) + ")" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        comp   = obj.host_computer
+        pubIp  = comp.public_ip
+        isRoot = false
+        pf = comp.File("/etc/passwd")
+        if pf then isRoot = pf.has_permission("w")
+
+        if not isRoot then
+            print(c.yellow + "  [" + idx + "] " + pubIp + " — guest only, skipping" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        print(c.orange + "  [" + idx + "] " + pubIp + c.ennd)
+
+        libsOk = 0
+        for lib in libs
+            srcPath = srcDir + "/" + lib
+            if not myComp.File(srcPath) then
+                print(c.grey + "    " + lib + " — not found locally, skipping" + c.ennd)
+                continue
+            end if
+            result = myShell.scp(srcPath, dest, obj)
+            if typeof(result) == "string" and result != "" then
+                print(c.yellow + "    " + lib + " — failed: " + result + c.ennd)
+            else
+                print(c.lime + "    [+] " + lib + c.ennd)
+                libsOk = libsOk + 1
+            end if
+        end for
+		mxSrc = "/lib/metaxploit.so"
+		if mxDest == null then mxDest = "/lib"
+		if not myComp.File(mxSrc) then mxSrc = srcDir + "/metaxploit.so"
+		if myComp.File(mxSrc) then
+			mxResult = myShell.scp(mxSrc, mxDest, obj)
+			if typeof(mxResult) == "string" and mxResult != "" then
+				print(c.red +"	[!] " + c.ennd + c.blue + "metaxploit.so - failed: " + mxResult)
+			else
+				print(c.lime + "	[+] metaxploit.so")
+				libsOk = libsOk + 1
+			end if
+			
+			else
+			print(c.grey + "	[i] metaxploit.so not found locally")
+		end if
+		
+        if libsOk > 0 then planted = planted + 1
+        idx = idx + 1
+    end for
+
+    print(c.grey + "================================================================" + c.ennd)
+    print(c.cyan + "plant --stack complete" + c.ennd)
+    print(c.grey + "  planted: " + planted + "  skipped: " + skipped + "  total: " + objectStack.len + c.ennd)
+end function
+
+// ── plantstack ───────────────────────────────────────────────────
+// Kept as a thin backward-compatible alias — plant --stack (below) is
+// the same PlantToStack logic under phantom's newer flag convention.
+// Usage: plantstack [lib1] [lib2] ...
+//        plantstack           → plants init.so + libhttp.so (defaults)
+//        plantstack init.so   → plants only init.so
+CmdPlantstack = function(inp)
+    libs = []
+    if inp.len >= 2 then
+        for a in inp[1:]
+            libs.push(a)
+        end for
+    else
+        libs = ["metaxploit.so", "init.so", "libhttp.so", "net.so"]
+    end if
+    PlantToStack(libs, "/lib")
+end function
+CommandTable["plantstack"] = @CmdPlantstack
+
+// ── plant ────────────────────────────────────────────────────────
+// plant [-l lib]... [-d dest] [--stack]
+// No -l: defaults to init.so + libhttp.so. No -d: defaults to /lib.
+// No --stack: plants onto the single held shell (`object`) — same as
+// plant always did, now also always accepting multiple -l libs instead
+// of just one. --stack instead sweeps every root shell on the object
+// stack (this absorbs what plantstack was for; see above).
+// ── plant ────────────────────────────────────────────────────────
+// plant                         upload everything in /root/InsecureLibs
+// plant <lib> [lib2...]         upload only the named lib(s)
+// plant -l <lib> [-l <lib2>]    same, flag style
+// plant ... -d <dest>           destination (default /lib)
+// plant ... --stack             every root shell on the stack instead
+// plant -ls                     list what's in /root/InsecureLibs
+CmdPlant = function(inp)
+    srcDir    = "/root/InsecureLibs"
+    dest      = "/lib"
+    libs      = []
+    stackMode = false
+	mxOnly = false
+	mxPath = null
+
+    // list mode
+    if inp.indexOf("-ls") != null then
+        dir = myComp.File(srcDir)
+        if not dir then
+            print(c.yellow + "<b>plant: " + srcDir + " not found" + c.ennd)
+            return
+        end if
+        print(c.cyan + "<b>" + srcDir + c.ennd)
+        for f in dir.get_files
+            print(c.grey + "  " + f.name + c.ennd)
+        end for
+        return
+    end if
+
+    i = 1
+    while i < inp.len
+        if inp[i] == "-l" and i + 1 < inp.len then
+            libs.push(inp[i+1])
+            i = i + 2
+        else if inp[i] == "-d" and i + 1 < inp.len then
+            dest = inp[i+1]
+            i = i + 2
+		else if inp[i] == "-m" then
+			mxOnly = true
+			if i + 1 < inp.len and inp[i+1][0:1] != "-" then
+				mxPath = inp[i+1]
+				i = i + 2
+			else
+				i = i + 1
+			end if
+        else if inp[i] == "--stack" then
+            stackMode = true
+            i = i + 1
+        else if inp[i][0:1] != "-" then
+            // bare word = lib name
+            libs.push(inp[i])
+            i = i + 1
+        else
+            i = i + 1
+        end if
+    end while
+	if mxOnly then
+		if stackMode then
+			PlantToStack([], dest, mxPath)
+			else
+				PlantToObject([], dest, mxPath)
+			end if
+			return
+		end if
+		
+    // nothing named: everything in the folder
+    if libs.len == 0 then
+        dir = myComp.File(srcDir)
+        if dir then
+            for f in dir.get_files
+                libs.push(f.name)
+            end for
+        end if
+    end if
+
+    if libs.len == 0 then
+        print(c.yellow + "<b>plant: no libs to upload (" + srcDir + " empty or missing)" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    if stackMode then
+        PlantToStack(libs, dest)
+    else
+        PlantToObject(libs, dest)
+    end if
+end function
+CommandTable["plant"] = @CmdPlant
+
+// ── loot ─────────────────────────────────────────────────────────
+// Runs harveststack (+ opt-in corlogstack/plantstack) back to back
+// across the whole object stack — one pass after a wstack/cascade
+// sweep instead of running each separately per target. Just calls the
+// existing, already-tested stack commands in sequence — same
+// behavior/output as running them one at a time.
+// harvest is the only default — corlogstack (-c) corrupts
+// /var/system.log, a real destructive action, and plantstack (-p)
+// only ever does anything on shell-type objects (PlantToStack skips
+// anything else — .scp() is shell-only, confirmed against GreyScript's
+// own docs), so defaulting it on is just noise on a stack that's
+// mostly computer-type objects. Both stay opt-in.
+CmdLoot = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>loot: stack is empty" + c.ennd)
+        return
+    end if
+    includeCorlog = inp.indexOf("-c") != null
+    includePlant  = inp.indexOf("-p") != null
+
+    print(char(10) + c.cyan + "<b>LOOT SWEEP  " + objectStack.len + " object(s)" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+
+    print(c.orange + "<b>[harvest]" + c.ennd)
+    CmdHarveststack(["harveststack"])
+
+    if includeCorlog then
+        print(char(10) + c.orange + "<b>[corlog]" + c.ennd)
+        CmdCorlogstack(["corlogstack"])
+    end if
+
+    if includePlant then
+        print(char(10) + c.orange + "<b>[plant]" + c.ennd)
+        CmdPlantstack(["plantstack"])
+    end if
+
+    print(char(10) + c.cyan + "<b>loot sweep complete" + c.ennd)
+end function
+CommandTable["loot"] = @CmdLoot
+
+// ── chainsaw ─────────────────────────────────────────────────────
+CmdChainsaw = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: chainsaw [run|load|deploy|help] [options]")
+        globals.pipeFailed = true
+        return
+    end if
+
+    subcommand = inp[1]
+
+    if subcommand == "help" then
+        print("ChainSaw - Markov Chain Password Cracker by NitroCynic")
+        print("")
+        print("Commands:")
+        print("  run     - Crack password locally or over network; success sets lObject (local) or object (remote)")
+        print("  load    - Load into GCO for in-script RCE chains")
+        print("  deploy  - Upload + launch on held remote shell to crack ROOT locally on target")
+        print("")
+        print("Parameters:")
+        print("  --user=USER    User to crack (default: root)")
+        print("  --ip=IP        Remote IP (if blank, cracks local shell)")
+        print("  --port=PORT    Remote port (default: 22)")
+
+    else if subcommand == "run" then
+        cs_params = ["run"]
+        if inp.len > 2 then
+            for i in range(2, inp.len - 1)
+                cs_params.push(inp[i])
+            end for
+        end if
+
+        ChainSaw.parse_params(cs_params)
+        ChainSaw.init
+        result = ChainSaw.crack(true)
+
+        if result then
+            print(c.lime + "Success! Password: " + c.gold + ChainSaw.password + c.ennd)
+            // ChainSaw.connect goes local (get_shell(user, password)) when
+            // no --ip was given, remote (connect_service) otherwise — route
+            // the shell the same way Escalate does for local privesc:
+            // lObject for local, object/remotePath for a held remote target.
+            if ChainSaw.ip == "" then
+                globals.lObject = result
+                print(c.lime + "  local shell acquired" + c.ennd)
+            else
+                globals.object = result
+                globals.remotePath = "/"
+                print(c.lime + "  remote shell acquired: " + ChainSaw.ip + c.ennd)
+            end if
+            globals.pipeFailed = false
+        else
+            print(c.red + "Failed to crack password" + c.ennd)
+            globals.pipeFailed = true
+        end if
+
+    else if subcommand == "load" then
+        cs_params = ["load"]
+        if inp.len > 2 then
+            for i in range(2, inp.len - 1)
+                cs_params.push(inp[i])
+            end for
+        end if
+        ChainSaw.parse_params(cs_params)
+        ChainSaw.load
+
+        print(c.lime + "ChainSaw loaded into GCO" + c.ennd)
+        globals.pipeFailed = false
+
+    else if subcommand == "deploy" then
+        if typeof(object) != "shell" then
+            globals.pipeFailed = true
+            print(c.yellow + "<b>chainsaw deploy: need a held remote shell — object is " + typeof(object) + c.ennd)
+        else
+            ChainSaw.load
+
+            rcePath = "/home/guest"
+            rceName = "chainsaw_rce"
+            rceSrc  = rcePath + "/" + rceName + ".src"
+
+            rceLines = []
+            rceLines.push("chainsaw = get_custom_object.chainsaw")
+            rceLines.push("chainsaw.init()")
+            rceLines.push("chainsaw.crack()")
+            rceString = rceLines.join(char(10))
+
+            object.host_computer.touch(rcePath, rceName + ".src")
+            rceFile = object.host_computer.File(rceSrc)
+            if not rceFile then
+                globals.pipeFailed = true
+                print(c.yellow + "<b>chainsaw deploy: could not create " + rceSrc + " on target" + c.ennd)
+            else
+                rceFile.set_content(rceString)
+                print(c.orange + "Building chainsaw_rce on target..." + c.ennd)
+                buildRes = object.build(rceSrc, rcePath)
+                if typeof(buildRes) == "string" and buildRes != "" then
+                    globals.pipeFailed = true
+                    print(c.yellow + "<b>chainsaw deploy: remote build failed - " + buildRes + c.ennd)
+                else
+                    print(c.lime + "  [+] built " + rceName + c.ennd)
+                    print(c.cyan + "Launching on target (cracking local root)..." + c.ennd)
+                    object.launch(rcePath + "/" + rceName)
+
+                    gcoCS = get_custom_object
+                    if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
+                        globals.object = gcoCS.chainsaw.shell
+                        globals.remotePath = "/"
+                        print(c.lime + "<b>  [+] root shell acquired!" + c.ennd)
+                        print(c.gold + "  password: " + gcoCS.chainsaw.password + c.ennd)
+                        globals.pipeFailed = false
+                    else
+                        globals.pipeFailed = true
+                        print(c.yellow + "<b>chainsaw deploy: launched, but no shell came back yet" + c.ennd)
+                        print(c.grey + "  watch above for live print output, or run 'chainsaw deploy' again" + c.ennd)
+                    end if
+                end if
+            end if
+        end if
+
+    else
+        print(c.yellow + "Unknown chainsaw subcommand: " + subcommand + c.ennd)
+        globals.pipeFailed = true
+    end if
+end function
+CommandTable["chainsaw"] = @CmdChainsaw
+
+// ── siphon ───────────────────────────────────────────────────────
+// NOTE: original dispatcher called Siphon(inp[1]) / Siphon(null) but
+// no Siphon() definition has been seen in any file sent so far — it
+// must live in a module not yet shared. Preserving the call as-is;
+// flag if it errors as undefined.
+CmdSiphon = function(inp)
+	flags = ""
+	if typeof(inp) == "list" then
+		for a in inp[1:]
+			flags = flags + " " + a
+		end for
+		else if typeof(inp) == "string" then
+			flags = inp
+		end if
+		Siphon(flags)
+end function
+CommandTable["siphon"] = @CmdSiphon
+
+// ── call / macall ─────────────────────────────────────────────────
+CmdCall = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: call <macro> [arg1 arg2...]")
+        print(c.grey + "  e.g.  call hunt 80" + c.ennd)
+        print(c.grey + "  e.g.  call get_ips | clip @result" + c.ennd)
+    else
+        name = inp[1]
+        args = inp[2:]
+        result = MacroCall(name, args)
+        if result != null then
+            globals.pipeResult = result
+            print(c.teal + "  → " + result + c.ennd)
+        else
+            globals.pipeFailed = true
+        end if
+    end if
+end function
+CommandTable["call"] = @CmdCall
+CommandTable["macall"] = @CmdCall
+
+// ── mac ──────────────────────────────────────────────────────────
+CmdMac = function(inp)
+    macDir = "/root/ai/mac"
+    if inp.len == 1 or inp[1] == "list" then
+        d = myComp.File(macDir)
+        if not d then
+            print(c.yellow + "  no macros found — create .txt files in " + macDir + c.ennd)
+        else
+            files = d.get_files
+            if files.len == 0 then
+                print(c.grey + "  no macros in " + macDir + c.ennd)
+            else
+                print(c.cyan + "<b>macros in " + macDir + ":" + c.ennd)
+                for f in files
+                    print(c.gold + "  " + f.name + c.ennd)
+                end for
+            end if
+        end if
+    else if inp[1] == "show" then
+        if inp.len < 3 then
+            print(c.yellow + "<b>usage: mac show <name>" + c.ennd)
+        else
+            name = inp[2]
+            f = myComp.File(macDir + "/" + name + ".txt")
+            if not f then f = myComp.File(macDir + "/" + name)
+            if not f then
+                print(c.yellow + "<b>mac: " + name + " not found in " + macDir + c.ennd)
+            else
+                print(c.cyan + "<b>" + f.name + ":" + c.ennd)
+                lines = f.get_content.split(char(10))
+                i = 1
+                for line in lines
+                    if line != "" then
+                        col = c.grey
+                        if line[0:2] == "//" then col = c.teal
+                        print(col + "  " + i + "  " + line + c.ennd)
+                    end if
+                    i = i + 1
+                end for
+            end if
+        end if
+    else
+        // run macro — "mac trace <name> [args]" runs the exact same
+        // way but prints each compiled line right before it executes
+        // (see phantom.src's macroQueue dispatch and CheckMacroComplete,
+        // macro.src, for where globals.macroTrace is read/cleared).
+        // Useful for a macro that's misbehaving and you want to see
+        // exactly what line it's on, including compiled control-flow
+        // sentinels (__if__/__for__/etc.), not just the source text.
+        traceMode = false
+        nameIdx = 1
+        if inp[1] == "trace" then
+            traceMode = true
+            nameIdx = 2
+        end if
+
+        if inp.len <= nameIdx then
+            print(c.yellow + "<b>Usage: mac trace <name> [args]" + c.ennd)
+            return
+        end if
+
+        name = inp[nameIdx]
+        extraArgs = inp[nameIdx+1:]
+        globals.macroArgList = []
+        argCount = 0
+        // a piped result (e.g. "randip | mac t1") becomes $1, with any
+        // explicitly typed args shifting to $2, $3, ... — lets a macro
+        // receive pipe input directly, the same way any other command
+        // would, without an explicit @clip round-trip first
+        if pipeResult != "" then
+            globals.macroArgList.push(pipeResult)
+            argCount = argCount + 1
+            globals.pipeResult = ""
+        end if
+        for arg in extraArgs
+            globals.macroArgList.push(arg)
+            argCount = argCount + 1
+        end for
+        f = myComp.File(macDir + "/" + name + ".txt")
+        if not f then f = myComp.File(macDir + "/" + name)
+        if not f then
+            print(c.yellow + "<b>mac: '" + name + "' not found" + c.ennd)
+            print(c.grey + "  create " + macDir + "/" + name + ".txt in the code editor" + c.ennd)
+        else
+            lines = f.get_content.split(char(10))
+            globals.macroQueue = CompileMacroLines(lines, macroArgList, true)
+            if macroQueue.len == 0 then
+                print(c.yellow + "<b>mac: '" + name + "' is empty" + c.ennd)
+            else
+                globals.macroName  = name
+                globals.macroTrace = traceMode
+                if macroArgList.len > 0 then
+                    print(c.grey + "  args: " + macroArgList.len + c.ennd)
+                    i = 0
+                    while i < macroArgList.len
+                        print(c.grey + "    $" + (i+1) + " = " + macroArgList[i] + c.ennd)
+                        i = i + 1
+                    end while
+                end if
+                if traceMode then
+                    print(c.cyan + "<b>running macro '" + name + "' (" + macroQueue.len + " line(s)) — trace on" + c.ennd)
+                else
+                    print(c.cyan + "<b>running macro '" + name + "' (" + macroQueue.len + " line(s))" + c.ennd)
+                end if
+            end if
+        end if
+    end if
+end function
+CommandTable["mac"] = @CmdMac
+
+// ── exec ─────────────────────────────────────────────────────────
+CmdExec = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: exec [count] <command|macroname|block>")
+        print(c.grey + "  exec 10 grab @t 80 -push" + c.ennd)
+        print(c.grey + "  exec 5 hunt 80" + c.ennd)
+        print(c.grey + "  exec 3 randip | clip @a ; grab @a 80 -push" + c.ennd)
+    else
+        count = inp[1].to_int
+        if count != null and count > 0 then
+            cmdStr = inp[2:].join(" ")
+        else
+            count = 1
+            cmdStr = inp[1:].join(" ")
+        end if
+        // reconstruct full pipe chain
+        if pipeQueue.len > 0 then
+            cmdStr = cmdStr + " | " + pipeQueue.join(" | ")
+            globals.pipeQueue = []
+        end if
+        if cmdStr == "" then
+            print(c.yellow + "<b>exec: missing command" + c.ennd)
+        else
+            macDir = "/root/ai/mac"
+            firstWord = cmdStr.split(" ")[0]
+            macFile = myComp.File(macDir + "/" + firstWord + ".txt")
+            if not macFile then macFile = myComp.File(macDir + "/" + firstWord)
+            if macFile then
+                // ── macro file mode ──────────────────────────
+                globals.macroName = "exec"
+                execArgList = cmdStr.split(" ")[1:]
+                rawLines = macFile.get_content.split(char(10))
+                processedLines = CompileMacroLines(rawLines, execArgList, false)
+                globals.macroQueue = []
+                i = 0
+                while i < count
+                    for ln in processedLines
+                        globals.macroQueue.push(ln)
+                    end for
+                    i = i + 1
+                end while
+                print(c.cyan + "<b>exec: macro '" + firstWord + "' x" + count + " (" + macroQueue.len + " lines)" + c.ennd)
+            else if cmdStr.indexOf(";") != null then
+                // ── inline block mode — ; separates lines ────
+                globals.macroName = "exec"
+                rawParts = cmdStr.split(";")
+                trimmedLines = []
+                for line in rawParts
+                    while line.len > 0 and line[0] == " "
+                        line = line[1:]
+                    end while
+                    while line.len > 0 and line[-1] == " "
+                        line = line[:-1]
+                    end while
+                    trimmedLines.push(line)
+                end for
+                processedLines = CompileMacroLines(trimmedLines, [], false)
+                globals.macroQueue = []
+                i = 0
+                while i < count
+                    for ln in processedLines
+                        globals.macroQueue.push(ln)
+                    end for
+                    i = i + 1
+                end while
+                print(c.cyan + "<b>exec: block x" + count + " (" + macroQueue.len + " lines)" + c.ennd)
+            else
+                // ── single command mode ──────────────────────
+                globals.macroName = "exec"
+                globals.macroQueue = []
+                i = 0
+                while i < count
+                    globals.macroQueue.push(cmdStr)
+                    i = i + 1
+                end while
+                print(c.cyan + "<b>exec: '" + cmdStr + "' x" + count + c.ennd)
+            end if
+        end if
+    end if
+end function
+CommandTable["exec"] = @CmdExec
+
+// ── foreach ──────────────────────────────────────────────────────
+CmdForeach = function(inp)
+    if inp.len < 2 then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>usage: foreach @list | cmd @each ..." + c.ennd)
+    else if pipeQueue.len == 0 then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>foreach: no commands — use: foreach @list | cmd1 | cmd2" + c.ennd)
+    else
+        listVal = inp[1]
+        if listVal[0:1] == "@" then
+            // not a normal string clip (those get substituted before
+            // CmdForeach ever runs) — check for an object-list clip
+            // (e.g. from "stack | clip @b") before giving up. Reuses
+            // stackfor's own engine (phantom.src's main loop already
+            // drives stackforItems/stackforBody/stackforSaved) rather
+            // than reimplementing per-object iteration here — this is
+            // a single command per iteration, same shape stackfor
+            // already has, unlike the macro for-loop's multi-line body.
+            vnObj = listVal[1:]
+            gcoO = get_custom_object
+            if gcoO.hasIndex("objClips") and gcoO.objClips.hasIndex(vnObj) and gcoO.objClips[vnObj].len > 0 then
+                objItems = gcoO.objClips[vnObj]
+                globals.stackforSaved = globals.object
+                globals.stackforBody  = pipeQueue[0]
+                globals.pipeQueue = []
+                globals.stackforItems = objItems[1:]
+                globals.object = objItems[0]
+                globals.pipeQueue.push(stackforBody)
+                print(c.cyan + "<b>foreach: " + objItems.len + " object(s) — starting with " + objItems[0] + c.ennd)
+            else
+                globals.pipeFailed = true
+                print(c.yellow + "<b>foreach: @" + vnObj + " not set — use lanenum @" + vnObj + ", clip @" + vnObj + ", or stack | clip @" + vnObj + " first" + c.ennd)
+            end if
+        else
+            items = listVal.split(",")
+            if items.len == 0 or (items.len == 1 and items[0] == "") then
+                globals.pipeFailed = true
+                print(c.yellow + "<b>foreach: list is empty" + c.ennd)
+            else
+                globals.foreachBody = pipeQueue[0]
+                globals.pipeQueue = []
+                globals.foreachItems = items[1:]
+                pipeVars["each"] = items[0]
+                globals.pipeVars["each"] = items[0]
+                globals.pipeQueue.push(foreachBody)
+                print(c.cyan + "<b>foreach: " + items.len + " item(s) — starting with " + items[0] + c.ennd)
+            end if
+        end if
+    end if
+end function
+CommandTable["foreach"] = @CmdForeach
+
+// ── break ────────────────────────────────────────────────────────
+CmdBreak = function(inp)
+    loopIdx = null
+    k = 0
+    while k < macroQueue.len
+        if macroQueue[k].len >= 9 and macroQueue[k][:9] == "__while__" then
+            loopIdx = k
+            k = macroQueue.len
+        end if
+        k = k + 1
+    end while
+    if loopIdx != null then
+        globals.macroQueue = macroQueue[loopIdx + 1:]
+        globals.pipeFailed = false
+        print(c.grey + "  break: loop exited" + c.ennd)
+    else
+        print(c.grey + "  break: not inside a loop" + c.ennd)
+    end if
+end function
+CommandTable["break"] = @CmdBreak
+
+// ── continue ─────────────────────────────────────────────────────
+CmdContinue = function(inp)
+    loopIdx = null
+    k = 0
+    while k < macroQueue.len
+        if macroQueue[k].len >= 9 and macroQueue[k][:9] == "__while__" then
+            loopIdx = k
+            k = macroQueue.len
+        end if
+        k = k + 1
+    end while
+    if loopIdx != null then
+        skipped = loopIdx
+        globals.macroQueue = macroQueue[loopIdx:]
+        globals.pipeFailed = false
+        if skipped > 0 then print(c.grey + "  continue: skipped " + skipped + " line(s)" + c.ennd)
+    else if pipeQueue.len > 0 then
+        globals.pipeQueue = []
+        globals.pipeFailed = false
+    else
+        print(c.grey + "  continue: not inside a loop" + c.ennd)
+    end if
+end function
+CommandTable["continue"] = @CmdContinue
+
+// ── rlan ─────────────────────────────────────────────────────────
+CmdRlan = function(inp)
+    if not object then
+        print(c.yellow + "<b>rlan: no remote object" + c.ennd)
+        globals.pipeFailed = true
+    else
+        comp = object
+        if typeof(object) == "shell" then comp = object.host_computer
+        lanIp = comp.local_ip
+        if lanIp != null then lanIp = "" + lanIp
+        if lanIp == null or lanIp == "" or lanIp == "null" then
+            print(c.yellow + "<b>rlan: no LAN IP available (public-facing machine?)" + c.ennd)
+            globals.pipeFailed = true
+        else
+            print(c.cyan + "rlan: " + lanIp + c.ennd)
+            globals.pipeResult = lanIp
+            if inp.len >= 2 then
+                k = inp[1]
+                if k[0:1] == "@" then k = k[1:]
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[k] = lanIp
+                globals.pipeVars[k] = lanIp
+                print(c.lime + "  @" + k + " = " + lanIp + c.ennd)
+            end if
+        end if
+    end if
+end function
+CommandTable["rlan"] = @CmdRlan
+
+// ── rpub ─────────────────────────────────────────────────────────
+CmdRpub = function(inp)
+    if not object then
+        print(c.yellow + "<b>rpub: no remote object" + c.ennd)
+        globals.pipeFailed = true
+    else
+        comp = object
+        if typeof(object) == "shell" then comp = object.host_computer
+        pubIp = comp.public_ip
+        if pubIp == null or pubIp == "" then
+            print(c.yellow + "<b>rpub: could not get public IP" + c.ennd)
+            globals.pipeFailed = true
+        else
+            print(c.cyan + "rpub: " + pubIp + c.ennd)
+            globals.pipeResult = pubIp
+            if inp.len >= 2 then
+                k = inp[1]
+                if k[0:1] == "@" then k = k[1:]
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[k] = pubIp
+                globals.pipeVars[k] = pubIp
+                print(c.lime + "  @" + k + " = " + pubIp + c.ennd)
+            end if
+        end if
+    end if
+end function
+CommandTable["rpub"] = @CmdRpub
+
+// ── ports ────────────────────────────────────────────────────────
+CmdPorts = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: ports <ip>[,ip2,...] [port list] [opt:-r]")
+        print(c.grey + "  e.g.  ports @t 80 22 443" + c.ennd)
+        print(c.grey + "  e.g.  ports @p 22   (@p a comma list, e.g. from randip 10)" + c.ennd)
+        print(c.grey + "  -r    router mode — list open ports via get_router, no metaxploit (public ips only)" + c.ennd)
+        return
+    end if
+
+    uRouter = inp.indexOf("-r") != null
+    args = []
+    for a in inp[1:]
+        if a != "-r" then args.push(a)
+    end for
+    if args.len == 0 then
+        print(c.yellow + "<b>ports: no target ip given" + c.ennd)
+        return
+    end if
+
+    targets = args[0].split(",")
+    if args.len >= 2 then
+        portList = args[1:]
+    else
+        portList = ["22", "25", "80", "1542", "3306", "3307"]
+    end if
+
+    // router mode — no metaxploit; lists actually-open ports
+    if uRouter then
+        filter = []
+        if args.len >= 2 then filter = args[1:]
+        print(c.gold + "Router scan of " + targets.len + " ip(s) (no metaxploit)..." + c.ennd)
+        PortsRouter(targets, filter)
+        return
+    end if
+
+    // net_use mode — probes the port list (needs metaxploit)
+    print(c.orange + "Scanning " + targets.len + " ip(s) on " + portList.len + " port(s)..." + c.ennd)
+    openIps = []
+    lastOpenPort = ""
+    for tgt in targets
+        if tgt == "" then continue
+        openPorts = []
+        for p in portList
+            ns = metaxploit.net_use(tgt, p.to_int)
+            if ns then
+                print(c.lime + "  [+] " + tgt + "  " + p + " open" + c.ennd)
+                openPorts.push(p)
+            else
+                print(c.grey + "  [-] " + tgt + "  " + p + " closed" + c.ennd)
+            end if
+        end for
+        if openPorts.len > 0 then
+            openIps.push(tgt)
+            lastOpenPort = openPorts[0]
+        end if
+    end for
+    if openIps.len == 0 then
+        print(c.yellow + "<b>ports: no open ports found on " + args[0] + c.ennd)
+        globals.pipeFailed = true
+    else
+        print(c.cyan + "ports: " + openIps.len + "/" + targets.len + " ip(s) with an open port — " + openIps.join(", ") + c.ennd)
+        globals.pipeResult = openIps.join(",")
+        pipeVars["port"] = lastOpenPort
+        globals.pipeVars["port"] = lastOpenPort
+        if storeVar != null then
+            gco = get_custom_object
+            if not gco.hasIndex("clips") then gco.clips = {}
+            gco.clips[storeVar] = openIps.join(",")
+            globals.pipeVars[storeVar] = openIps.join(",")
+            print(c.lime + "  @" + storeVar + " = " + openIps.join(",") + c.ennd)
+        end if
+    end if
+end function
+CommandTable["ports"] = @CmdPorts
+
+// ── p (police records) ────────────────────────────────────────────
+CmdP = function(inp)
+    if typeof(object) != "shell" then
+        print(c.red + "p: must be holding remote shell" + c.ennd)
+    else
+        object.launch("/root/PoliceRecord.exe")
+    end if
+end function
+CommandTable["p"] = @CmdP
+
+// ── pre (session setup) ───────────────────────────────────────────
+CmdPre = function(inp)
+    me = get_shell
+    me.launch("/usr/bin/Mail.exe")
+    wait(2)
+    me.launch("/usr/bin/Browser.exe")
+    wait(2)
+    me.launch("/usr/bin/FileExplorer.exe")
+    wait(2)
+    me.launch("/usr/bin/Terminal.exe")
+    wait(2)
+    me.launch("/usr/bin/Terminal.exe")
+end function
+CommandTable["pre"] = @CmdPre
+CmdCode = function(inp)
+me = get_shell
+me.launch("/usr/bin/CodeEditor.exe")
+end function
+CommandTable["code"] = @CmdCode
+// ── exit / quit ────────────────────────────────────────────────────
+// Mirror of phantom.src's startup gco.local read: a nested phantom
+// instance (launched by jump/Propagate) writes its current
+// activeLib/activeMx back to gco.local right before exiting, so
+// Propagate can pick it back up the moment comp.launch() returns —
+// bringing a lib home from a nested launch, not just carrying one in.
+CmdExit = function(inp)
+    if globals.activeLib or globals.activeMx then
+        gcoExit = get_custom_object
+        gcoExit.local = {"activeLib": globals.activeLib, "activeMx": globals.activeMx}
+    end if
+    // batched db.txt write (see EdbAdd/FlushEdb in hack.src) hasn't run
+    // yet this command if exit/quit itself is what's ending the loop —
+    // flush explicitly so nothing found this command is lost
+    FlushEdb()
+    exit
+end function
+CommandTable["exit"] = @CmdExit
+CommandTable["quit"] = @CmdExit
+
+// ── claim ──────────────────────────────────────────────────────────
+// Picks up a shell left behind by ArLocal (autoroot -l / ar -l) in
+// gco.claimShell — e.g. jump to a target, autoroot -l yourself there,
+// then come back to your original phantom session and run claim to
+// have that root shell land in globals.object here. gco is a
+// persistent, player-scoped store (same reason slb.src/wsx.src already
+// hand live shell/computer objects back across a launch boundary
+// between two different machines), so this works across two
+// independent phantom sessions, not just within one script's own
+// launch/wait cycle.
+// claim [opt:-shell|-lib|-mx|-result]
+// No selector: auto-detect, checking shell then lib then mx then result
+// — fine as long as only one thing is ever waiting at a time. With
+// more than one pending (e.g. you left a shell earlier and forgot,
+// then later left a lib too), auto-detect always resolves to whichever
+// check comes first, so the other one silently never gets reached no
+// matter how many times you re-run bare claim. Pass an explicit
+// selector to bypass that and grab exactly the one you mean.
+CmdClaim = function(inp)
+    which = ""
+    if inp.len >= 2 then which = inp[1]
+    gcoClaim = get_custom_object
+
+    if which == "" or which == "-shell" then
+        if gcoClaim.hasIndex("claimShell") and gcoClaim.claimShell then
+            globals.object = gcoClaim.claimShell
+            globals.remotePath = "/"
+            gcoClaim.claimShell = null
+            // leave can hand off a computer object too, not just a shell —
+            // .host_computer only exists on shells, so branch instead of
+            // assuming shell like the original ArLocal-only version did
+            if typeof(object) == "shell" then
+                print(c.lime + "<b>claimed shell: " + object.host_computer.get_name + "  pub:" + object.host_computer.public_ip + "  lan:" + object.host_computer.local_ip + c.ennd)
+            else
+                print(c.lime + "<b>claimed computer: " + object.get_name + "  pub:" + object.public_ip + "  lan:" + object.local_ip + c.ennd)
+            end if
+            globals.pipeFailed = false
+            return
+        end if
+        if which == "-shell" then
+            print(c.yellow + "<b>claim -shell: nothing waiting" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+    end if
+
+    // gco.claimLib carries a lib NAME (never a live lib handle —
+    // payloads/slb.src's own header notes sharing an actual metaxploitLib
+    // object across a launch boundary was tried three times and failed
+    // every time, a reused handle's net_use comes back null), plus an
+    // optional ip/port the lib was seen on (left by leave -lib when a
+    // shell was held at the time). The receiving side tries a local
+    // /lib load first — same as libscan.src does for a named lib — and
+    // only falls back to redialing ip:port + dump_lib if this machine
+    // doesn't have that .so on disk (e.g. the lib was pulled off a
+    // remote target via dump_lib and never existed as a local file).
+    if which == "" or which == "-lib" then
+        if gcoClaim.hasIndex("claimLib") and gcoClaim.claimLib then
+            claimed = gcoClaim.claimLib
+            libName = claimed
+            libIp = null
+            libPort = null
+            if typeof(claimed) == "map" then
+                libName = claimed["name"]
+                if claimed.hasIndex("ip") then libIp = claimed["ip"]
+                if claimed.hasIndex("port") then libPort = claimed["port"]
+            end if
+            if libName and libName != "" then
+                gcoClaim.claimLib = null
+                ml = metaxploit.load("/lib/" + libName)
+                if not ml then ml = metaxploit.load(libName)
+                if not ml and libIp and libPort then
+                    print(c.grey + "  not on disk here — redialing " + libIp + ":" + libPort + " for dump_lib..." + c.ennd)
+                    ns = metaxploit.net_use(libIp, libPort)
+                    if ns then ml = ns.dump_lib
+                end if
+                if not ml then
+                    print(c.yellow + "<b>claim: lib not found here: " + libName + c.ennd)
+                    globals.pipeFailed = true
+                    return
+                end if
+                globals.activeLib = ml
+                print(c.lime + "<b>claimed + loaded lib: " + ml.lib_name + " " + ml.version + c.ennd)
+                print(c.grey + "  held in globals.activeLib — reference it directly, e.g. via exec/code" + c.ennd)
+                globals.pipeFailed = false
+                return
+            end if
+        end if
+        if which == "-lib" then
+            print(c.yellow + "<b>claim -lib: nothing waiting" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+    end if
+
+    // gco.claimMx carries a metaxploit.so PATH, not a live handle — same
+    // reasoning as claimLib above. Different metaxploit.so copies (e.g.
+    // pulled from a specific target) can decode things your own local
+    // one can't, so uselib checks globals.activeMx before falling back
+    // to the one global metaxploit loaded at startup.
+    if which == "" or which == "-mx" then
+        if gcoClaim.hasIndex("claimMx") and gcoClaim.claimMx and gcoClaim.claimMx != "" then
+            mxPath = gcoClaim.claimMx
+            gcoClaim.claimMx = null
+            mx = include_lib(mxPath)
+            if not mx then
+                print(c.yellow + "<b>claim: metaxploit not found at " + mxPath + c.ennd)
+                globals.pipeFailed = true
+                return
+            end if
+            globals.activeMx = mx
+            print(c.lime + "<b>claimed + loaded metaxploit: " + mxPath + c.ennd)
+            print(c.grey + "  held in globals.activeMx — uselib will use it over the default metaxploit" + c.ennd)
+            globals.pipeFailed = false
+            return
+        end if
+        if which == "-mx" then
+            print(c.yellow + "<b>claim -mx: nothing waiting" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+    end if
+
+    // gco.claimResult carries a plain list of db.txt-shaped entries
+    // (lib/ver/mem/val/type/user maps) left by "leave -result" — see
+    // that command for how they're packaged. Merging via EdbAdd both
+    // writes them into globals.edb and re-saves this machine's own
+    // db.txt, same as any exploit attempt recording a hit normally
+    // would — so a scan run entirely on session B's machine becomes
+    // permanently known here too, without ever syncing db.txt files
+    // by hand.
+    if which == "" or which == "-result" then
+        if gcoClaim.hasIndex("claimResult") and gcoClaim.claimResult and gcoClaim.claimResult.len > 0 then
+            entries = gcoClaim.claimResult
+            gcoClaim.claimResult = null
+            merged = 0
+            for e in entries
+                ver = ""
+                if e.hasIndex("ver") then ver = e["ver"]
+                objType = ""
+                if e.hasIndex("type") then objType = e["type"]
+                userCtx = ""
+                if e.hasIndex("user") then userCtx = e["user"]
+                EdbAdd(e["lib"], ver, e["mem"], e["val"], objType, userCtx)
+                merged = merged + 1
+            end for
+            print(c.lime + "<b>claimed " + merged + " db entries — merged into local db.txt" + c.ennd)
+            globals.pipeFailed = false
+            return
+        end if
+        if which == "-result" then
+            print(c.yellow + "<b>claim -result: nothing waiting" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+    end if
+
+    print(c.yellow + "<b>claim: nothing waiting to be claimed" + c.ennd)
+    globals.pipeFailed = true
+end function
+CommandTable["claim"] = @CmdClaim
+
+// ── leave ──────────────────────────────────────────────────────────
+// The mirror of claim: leaves whatever shell/computer you're currently
+// holding in gco.claimShell for pickup from ANOTHER phantom session —
+// e.g. hold a shell here, leave it, jump to a target, then claim it
+// from the nested instance running there (or the other way around).
+// leave -lib <name> [port] leaves a lib NAME (plus, if you're holding a
+// shell, its host's ip and the given port) in gco.claimLib — see the
+// claim-side comment on why a live lib handle can't make the same trip.
+// The ip/port let claim redial + dump_lib on the other end if the lib
+// isn't sitting in /lib there as an actual file.
+CmdLeave = function(inp)
+    if inp.len >= 3 and inp[1] == "-lib" then
+        gcoLeave = get_custom_object
+        libName = inp[2]
+        entry = {"name": libName}
+        if typeof(object) == "shell" then
+            entry["ip"] = object.host_computer.public_ip
+            if inp.len >= 4 then entry["port"] = inp[3].to_int
+        end if
+        gcoLeave.claimLib = entry
+        print(c.lime + "<b>left lib '" + libName + "' for pickup" + c.ennd)
+        if entry.hasIndex("ip") then
+            src = entry["ip"]
+            if entry.hasIndex("port") then src = src + ":" + entry["port"]
+            print(c.grey + "  with source " + src + " as a dump_lib fallback" + c.ennd)
+        end if
+        print(c.grey + "  run 'claim' from another phantom session to load it there" + c.ennd)
+        globals.pipeFailed = false
+        return
+    end if
+    if inp.len >= 2 and inp[1] == "-mx" then
+        // no path given -> default to phantom's own metaxploit.so
+        // (same path it loaded at startup) so "leave -mx" alone just
+        // shares your own copy without having to type it out
+        mxPath = currentPath + "/metaxploit.so"
+        if inp.len >= 3 then mxPath = inp[2]
+        gcoLeave = get_custom_object
+        gcoLeave.claimMx = mxPath
+        print(c.lime + "<b>left metaxploit path '" + mxPath + "' for pickup" + c.ennd)
+        print(c.grey + "  run 'claim' from another phantom session to load it there" + c.ennd)
+        globals.pipeFailed = false
+        return
+    end if
+
+    // leave -result — packages every globals.edb entry for whichever
+    // lib+version is currently held in globals.activeLib (set by claim
+    // -lib / uselib) into gco.claimResult, a plain list of db.txt-shaped
+    // maps (not a live object, so no launch-boundary problem like a lib
+    // handle has). Meant for: claim -lib a lib here, uselib -s to scan +
+    // record it to THIS machine's db.txt, then leave -result to hand
+    // those fresh findings back to wherever the lib name originally
+    // came from, via claim -result there.
+    if inp.len >= 2 and inp[1] == "-result" then
+        if not globals.activeLib then
+            print(c.yellow + "<b>leave -result: no lib held — claim -lib or uselib -s first" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        libName = globals.activeLib.lib_name
+        libVer  = globals.activeLib.version
+        matches = []
+        if globals.edb != null then
+            for e in globals.edb
+                exVer = ""
+                if e.hasIndex("ver") then exVer = e["ver"]
+                if e["lib"] == libName and exVer == libVer then matches.push(e)
+            end for
+        end if
+        if matches.len == 0 then
+            print(c.yellow + "<b>leave -result: no db.txt entries for " + libName + " " + libVer + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        gcoLeave = get_custom_object
+        gcoLeave.claimResult = matches
+        print(c.lime + "<b>left " + matches.len + " db entries for " + libName + " " + libVer + " for pickup" + c.ennd)
+        print(c.grey + "  run 'claim -result' from another phantom session to merge them into its db.txt" + c.ennd)
+        globals.pipeFailed = false
+        return
+    end if
+
+    if typeof(object) != "shell" and typeof(object) != "computer" then
+        print(c.yellow + "<b>leave: not holding a shell or computer to leave" + c.ennd)
+        print(c.grey + "  or: leave -lib <name>  /  leave -mx <path>  /  leave -result  for those instead" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    gcoLeave = get_custom_object
+    gcoLeave.claimShell = object
+    print(c.lime + "<b>left " + typeof(object) + " for pickup" + c.ennd)
+    print(c.grey + "  run 'claim' from another phantom session to grab it" + c.ennd)
+    globals.pipeFailed = false
+end function
+CommandTable["leave"] = @CmdLeave
+
+// ── carry ──────────────────────────────────────────────────────────
+// Not the same job as claim/leave — those are a one-shot cross-session
+// mailbox (claimShell gets nulled the instant something picks it up).
+// carry is same-session: snapshots the shell/computer you're currently
+// holding into gco.object, a stable field any script you object.launch()
+// afterward can read directly, instead of every payload needing its own
+// bespoke field (gco.wsUseLib, gco.testShell, etc.) wired in by hand.
+// Confirmed safe — shell/computer objects survive the object.launch()
+// boundary via gco (payloads/test_shellsurvival_*), unlike a raw
+// metaxploitLib handle (payloads/test_libsurvival_*), which still does not.
+// carry -c clears it back out once you're done, so a stale object doesn't
+// linger into an unrelated later launch.
+// carry -home snapshots get_shell() itself (YOUR OWN machine, not
+// whatever you're holding) into gco.homeShell instead. Since
+// get_custom_object() always returns the one single shared map (see
+// [[project-phantom2-gco-launch-boundary-object-survival]]), this needs
+// no launch-boundary trick at all — set it once here, then gco.homeShell
+// is already sitting there for a nested phantom instance to read the
+// instant jump lands you on a target (payloads/test_homeshell_*
+// confirmed a self-shell stays fully functional from a remote machine).
+CmdCarry = function(inp)
+    if inp.len >= 2 and inp[1] == "-c" then
+        gcoCarry = get_custom_object
+        gcoCarry.object = null
+        gcoCarry.homeShell = null
+        print(c.lime + "<b>carry: cleared gco.object and gco.homeShell" + c.ennd)
+        globals.pipeFailed = false
+        return
+    end if
+    if inp.len >= 2 and inp[1] == "-home" then
+        gcoCarry = get_custom_object
+        gcoCarry.homeShell = get_shell
+        print(c.lime + "<b>carried this machine into gco.homeShell" + c.ennd)
+        print(c.grey + "  jump/launch anywhere from here — gco.homeShell.host_computer still reaches back to THIS machine" + c.ennd)
+        globals.pipeFailed = false
+        return
+    end if
+    if typeof(object) != "shell" and typeof(object) != "computer" then
+        print(c.yellow + "<b>carry: not holding a shell or computer" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    gcoCarry = get_custom_object
+    gcoCarry.object = object
+    print(c.lime + "<b>carried " + typeof(object) + " into gco.object" + c.ennd)
+    print(c.grey + "  any script you object.launch() from here can read gco.object directly" + c.ennd)
+    globals.pipeFailed = false
+end function
+CommandTable["carry"] = @CmdCarry
+
+// ── uselib ─────────────────────────────────────────────────────────
+// First real consumer of globals.activeLib (set by claim). Tries
+// db-known pairs first (KnownExploits, hack.src), else scans/decodes
+// fresh, same precedence ScanLib/grab already use elsewhere. Scans
+// with globals.activeMx (claim -mx) if one's held, since a different
+// metaxploit.so copy can decode things the default one can't — falls
+// back to the one global metaxploit loaded at startup otherwise.
+// uselib [opt:inject] [opt:-l lanip] [opt:-c] [opt:-s] [opt:-a]
+// -c: computer-ONLY — without it, only a shell result counts as a hit;
+// with it, only a computer counts (a shell result gets rejected, not
+// accepted alongside). Implies -a: stopping at the first computer
+// found isn't useful for discovery, so -c alone tries every candidate
+// and pushes every computer it lands, same as -a -c would.
+// -s: recon only — decode + record candidates to db.txt (unconfirmed,
+// blank type/user, same as scanlan's direct-ip mode) without ever
+// calling overflow(). Point of this: claim a lib mid-jump, come back
+// out to your original session, and bank its candidates in db.txt
+// without needing a live target to attack right now.
+// -l lanip: bounce onto a LAN device — passed as the overflow's 3rd
+// (inject) arg, same trick LibScan/scanlib already use for LAN targets.
+// A bare positional arg (no -l) still works the same way for backward
+// compat, -l just makes the intent explicit instead of "whatever
+// wasn't -c/-s must be the inject value."
+// -a: try every candidate instead of stopping at the first hit,
+// pushing every shell AND computer found onto objectStack (like
+// wstack) instead of landing just one in globals.object.
+// -sh: same sweep as -a, but shells only. (-c is the computers-only
+// counterpart; -sh -c together is the same as -a.)
+// Any of -a/-sh/-c dedupes the stack: an object whose machine (public
+// + LAN ip) and type are already on the stack is skipped, unless the
+// new one is root and the existing one isn't — then it replaces it.
+// -lib name: loadlib + uselib in one shot — loads that lib fresh from
+// this machine's own /lib into globals.activeLib before scanning,
+// instead of requiring a separate loadlib call first. Point of this:
+// jump, -lib load + attack in one command, quit, without a second
+// round trip through loadlib.
+CmdUselib = function(inp)
+    libIdx = inp.indexOf("-lib")
+    if libIdx != null and libIdx + 1 < inp.len then
+        libName = inp[libIdx + 1]
+        ml = metaxploit.load("/lib/" + libName)
+        if not ml then ml = metaxploit.load(libName)
+        if not ml then
+            print(c.yellow + "<b>uselib -lib: not found: " + libName + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        globals.activeLib = ml
+        print(c.lime + "<b>uselib -lib: loaded " + ml.lib_name + " " + ml.version + c.ennd)
+    end if
+    if not globals.activeLib then
+        print(c.yellow + "<b>uselib: no active lib — claim one first" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    ml = globals.activeLib
+    print(c.cyan + "<b>uselib: scanning with " + ml.lib_name + " " + ml.version + c.ennd)
+    mx = metaxploit
+    if globals.activeMx then mx = globals.activeMx
+    scanOnly = inp.indexOf("-s") != null
+    acceptComputer = inp.indexOf("-c") != null
+    inject = null
+    lIdx = inp.indexOf("-l")
+    if lIdx != null and lIdx + 1 < inp.len then inject = inp[lIdx + 1]
+    if not inject then
+        for a in inp[1:]
+            if a != "-c" and a != "-s" and a != "-sh" and a != "-l" and a != "-lib" and a != "-a" and not (libIdx != null and inp.indexOf(a) == libIdx + 1) then inject = a
+        end for
+    end if
+    if inject then print(c.grey + "  bouncing via " + inject + c.ennd)
+
+    pairs = KnownExploits(ml.lib_name, ml.version)
+    freshScan = pairs.len == 0
+    if freshScan then
+        mems = mx.scan(ml)
+        if mems then
+            for mem in mems
+                for addr in mx.scan_address(ml, mem).split("Unsafe check: ")
+                    if addr.indexOf("<b>") == null then continue
+                    v = addr[addr.indexOf("<b>")+3:addr.indexOf("</b>")]
+                    if v != "" then pairs.push([mem, v])
+                end for
+            end for
+        end if
+    end if
+    if pairs.len == 0 then
+        print(c.yellow + "<b>uselib: no candidates for " + ml.lib_name + " " + ml.version + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    if scanOnly then
+        print(c.cyan + "<b>uselib -s: " + pairs.len + " candidate(s) for " + ml.lib_name + " " + ml.version + c.ennd)
+        for pair in pairs
+            print(c.gold + "  " + pair[0] + "  " + pair[1] + c.ennd)
+            // only the fresh-scan case needs recording — KnownExploits
+            // pairs are already in db.txt by definition
+            if freshScan then EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], "", "")
+        end for
+        globals.pipeFailed = false
+        return
+    end if
+
+    // -c now means computer-ONLY (shells get rejected), not "also
+    // accept a computer alongside a shell" — without -c, a shell is
+    // the only thing that counts as a hit, matching the original
+    // "computers need -c to opt in" convention exactly, just no longer
+    // letting a shell sneak through once -c is given
+    // -c also implies -a: stopping at the first computer isn't useful
+    // for a discovery flow, you want every option found, not just
+    // whichever candidate happened to land first
+    // -a = shells + computers, -sh = shells only, -c = computers only
+    // (-sh -c together = -a). Any of the three means "try every
+    // candidate and push every match" instead of stopping at the first.
+    wantAll   = inp.indexOf("-a") != null
+    wantShell = wantAll or inp.indexOf("-sh") != null
+    wantComp  = wantAll or acceptComputer
+    tryAll = wantShell or wantComp
+    if tryAll then
+        // "<public ip>|<lan ip>|<type>" — same machine reached through a
+        // different exploit yields a distinct object, so identity (!=)
+        // can't dedupe; compare by where it lands instead
+        objKey = function(o)
+            t = typeof(o)
+            hc = o
+            if t == "shell" then hc = o.host_computer
+            return hc.public_ip + "|" + hc.local_ip + "|" + t
+        end function
+        modeTag = "-a"
+        if not wantAll and wantShell and not wantComp then modeTag = "-sh"
+        if not wantAll and wantComp and not wantShell then modeTag = "-c"
+
+        pushed = 0
+        upgraded = 0
+        dupes = 0
+        for pair in pairs
+            if inject then obj = ml.overflow(pair[0], pair[1], inject) else obj = ml.overflow(pair[0], pair[1])
+            t = typeof(obj)
+            EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], t, "")
+            matched = (t == "shell" and wantShell) or (t == "computer" and wantComp)
+            if not matched then continue
+
+            key = objKey(obj)
+            newRoot = GetUserCtx(obj) == "root"
+            existIdx = null
+            si = 0
+            while si < objectStack.len
+                so = objectStack[si]
+                st = typeof(so)
+                if (st == "shell" or st == "computer") and objKey(so) == key then
+                    existIdx = si
+                    break
+                end if
+                si = si + 1
+            end while
+
+            ctx = "guest"
+            if newRoot then ctx = "root"
+            if existIdx == null then
+                objectStack.push(obj)
+                pushed = pushed + 1
+                print(c.green + "  [+] " + t + " (" + ctx + ") via " + pair[0] + " " + pair[1] + " → stack [" + objectStack.len + "]" + c.ennd)
+            else if newRoot and GetUserCtx(objectStack[existIdx]) != "root" then
+                objectStack[existIdx] = obj
+                upgraded = upgraded + 1
+                print(c.lime + "  [^] " + t + " (root) via " + pair[0] + " " + pair[1] + " → replaced guest at stack [" + (existIdx + 1) + "]" + c.ennd)
+            else
+                dupes = dupes + 1
+                print(c.grey + "  [=] " + t + " via " + pair[0] + " " + pair[1] + " — already on stack [" + (existIdx + 1) + "], skipped" + c.ennd)
+            end if
+        end for
+        if pushed == 0 and upgraded == 0 then
+            if dupes > 0 then
+                print(c.grey + "<b>uselib " + modeTag + ": nothing new — " + dupes + " already on stack" + c.ennd)
+                globals.pipeFailed = false
+            else
+                print(c.yellow + "<b>uselib " + modeTag + ": no working exploit" + c.ennd)
+                globals.pipeFailed = true
+            end if
+        else
+            print(c.cyan + "<b>uselib " + modeTag + ": " + pushed + " pushed, " + upgraded + " upgraded to root, " + dupes + " dupes skipped" + c.ennd)
+            globals.pipeFailed = false
+        end if
+        return
+    end if
+
+    for pair in pairs
+        if inject then obj = ml.overflow(pair[0], pair[1], inject) else obj = ml.overflow(pair[0], pair[1])
+        t = typeof(obj)
+        EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], t, "")
+        matched = false
+        if acceptComputer then matched = t == "computer" else matched = t == "shell"
+        if matched then
+            globals.object = obj
+            globals.remotePath = "/"
+            print(c.lime + "<b>uselib: " + t + " via " + pair[0] + " " + pair[1] + c.ennd)
+            globals.pipeFailed = false
+            return
+        end if
+    end for
+    print(c.yellow + "<b>uselib: no working exploit" + c.ennd)
+    globals.pipeFailed = true
+end function
+CommandTable["uselib"] = @CmdUselib
+
+// ── null / noop / pass ─────────────────────────────────────────────
+CmdNoop = function(inp)
+    // intentional no-op
+end function
+CommandTable["null"] = @CmdNoop
+CommandTable["noop"] = @CmdNoop
+CommandTable["pass"] = @CmdNoop
+
+///scan lan
+CmdLanRecon = function(inp)
+lsBin = "/root/ai/tp/ScanLan.exe"
+if not myComp.File(lsBin) then
+    print(c.yellow + "<b>lanrecon: ScanLan.exe not found at " + lsBin + c.ennd)
+    return
+end if
+
+myShell.scp(lsBin, "/home/guest", object)
+object.launch("/home/guest/ScanLan.exe")
+end function
+CommandTable["lanrecon"] = @CmdLanRecon
+///Admin Monitor
+CmdAdminMonitor = function(inp)
+lsBin = "/root/ai/tp/ScanLan.exe"
+if not myComp.File(lsBin) then
+	print(c.yellow + "<b>admin: AdminMonitor.exe not found in --> " + currentPath)
+	return
+end if
+myShell.scp(lsBin, "/home/guest", object)
+object.launch("/home/guest/AdminMonitor.exe")
+end function
+CommandTable["admin"] = @CmdAdminMonitor
+
+
+
+
+
+
+
+
