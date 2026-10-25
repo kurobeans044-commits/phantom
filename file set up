@@ -1,0 +1,172 @@
+me = get_shell
+mycomp = me.host_computer
+if mycomp.File("/root/ai") == null then
+	mycomp.create_folder("/root", "ai")
+	print("ai folder now in exsistence!")
+	else
+	print("ai exsisty")
+end if
+
+mycomp = me.host_computer
+if mycomp.File("/root/ai/tp") == null then
+	mycomp.create_folder("/root", "tp")
+	print("tp folder now in exsistence!")
+	else
+	print("tp exsisty")
+end if
+
+mycomp = me.host_computer
+if mycomp.File("/data") == null then
+	mycomp.create_folder("/", "data")
+	print("data folder now in exsistence!")
+	else
+	print("data exsisty")
+end if
+
+if mycomp.File("/data/pregens.src") == null then
+	mycomp.touch("/data", "data")
+	print("pregens.src now in exsistence!")
+	else
+	print("pregens.src exsisty")
+end if
+
+if mycomp.File("/data/samples") == null then
+	mycomp.touch("/data", "samples")
+	print("samples.src now in exsistence!")
+	else
+	print("samples exsisty")
+end if
+
+
+if mycomp.File("/root/ai/pt") == null then
+	mycomp.create_folder("/root/ai", "pt")
+	print("/root/ai/pt folder now in exsistence!")
+	else
+	print("pt exsisty")
+end if
+
+if mycomp.File("/root/ai/rsh") == null then
+	mycomp.create_folder("/root/ai", "rsh")
+	print("/root/ai/rsh folder now in exsistence!")
+	else
+	print("rsh exsisty")
+end if
+
+if mycomp.File("/root/ai/mac") == null then
+	mycomp.create_folder("/root/ai", "mac")
+	print("/root/ai/mac folder now in exsistence!")
+	else
+	print("mac exsisty")
+end if
+
+if mycomp.File("/root/ai/tp/hack.src") == null then
+	mycomp.touch("/root/ai", "hack.src")
+	print("hack.src now exists")
+	else
+	print("hack.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/macro.src") == null then
+	mycomp.touch("/root/ai", "macro.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/macro.src") != null then print("macro.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/ops.src") == null then
+	mycomp.touch("/root/ai", "ops.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/ops.src") != null then print("ops.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/remote.src") == null then
+	mycomp.touch("/root/ai", "remote.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/remote.src") != null then print("remote.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/ops.src") == null then
+	mycomp.touch("/root/ai", "ops.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/ops.src") != null then print("ops.src already exists")
+
+end if
+
+if mycomp.File("/root/ai/tp/chainsaw.src") == null then
+	mycomp.touch("/root/ai", "chainsaw.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/chainsaw.src") != null then print("chainsaw.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/stack.src") == null then
+	mycomp.touch("/root/ai", "stack.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/stack.src") != null then print("stack.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/rt.src") == null then
+	mycomp.touch("/root/ai", "rt.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/rt.src") != null then print("rt.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/game.src") == null then
+	mycomp.touch("/root/ai", "game.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/game.src") != null then print("game.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp") == null then
+	mycomp.create_folder("/root/ai", "tp")
+	print("tp folder now in exsistence!")
+	else
+	print("tp exsisty")
+end if
+
+mycomp = me.host_computer
+if mycomp.File("/root/ai/tp/phantom.src") == null then
+	mycomp.touch("/root/ai/tp", "phantom.src")
+	print("tp/phantom.src folder now in exsistence!")
+	else
+	print("tp/phantom.src exsisty")
+end if
+
+mycomp = me.host_computer
+if mycomp.File("/root/tp/slb.src") == null then
+	mycomp.touch("/root/ai/tp/", "slb.src")
+	print("tp/slb.src folder now in exsistence!")
+	else
+	print("tp/slb.src exsisty")
+end if
+
+mycomp = me.host_computer
+if mycomp.File("/root/ai/tp/wsx.src") == null then
+	mycomp.touch("/root/ai/tp", "wsx.src")
+	print("tp/wsx.src folder now in exsistence!")
+	else
+	print("tp/wsx.src exsisty")
+end if
+
+mycomp = me.host_computer
+if mycomp.File("/root/ai/tp/netmap.src") == null then
+	mycomp.touch("/root/ai/tp", "netmap.src")
+	print("tp/netmap.src folder now in exsistence!")
+	else
+	print("tp/netmap.src exsisty")
+end if
+
+mycomp = me.host_computer
+if mycomp.File("/root/ai/tp/libscan") == null then
+	mycomp.touch("/root/ai/tp", "libscan.src")
+	print("tp/libscan.src in exsistence")
+	else
+	print("tp/libscan.src now in existy")
+end if
+
