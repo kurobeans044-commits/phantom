@@ -1,0 +1,11 @@
+// ar.src  |  autoroot helper  |  takes passwords as params
+gco = get_custom_object
+if params.len == 0 then exit
+for pw in params
+    s = get_shell("root", pw)
+    if typeof(s) == "shell" then
+        gco.rootShell = s
+        gco.rootPass = pw
+        exit
+    end if
+end for
