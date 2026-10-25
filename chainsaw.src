@@ -1,0 +1,355 @@
+//cat > /root/ai/pt/chainsaw.src << 'EOF'
+
+version = "1.0.0"
+testing = false
+testing_pass = "Dessnap"
+
+// Fallback samples if import_code fails
+samples = ["password", "123456", "qwerty", "admin", "letmein", "welcome", "monkey", "dragon", 
+           "master", "sunshine", "princess", "batman", "superman", "shadow", "michael", "football",
+           "baseball", "soccer", "hockey", "ranger", "trustno1", "starwars", "cheese", "access",
+           "secret", "computer", "thunder", "hunter", "summer", "tiger", "robert", "diamond",
+           "sparky", "cowboy", "camaro", "matrix", "falcon", "bailey", "guitar", "jackson",
+           "purple", "phoenix", "morgan", "tigers", "porsche", "mickey", "maverick", "cookie",
+           "peanut", "justin", "money", "samantha", "steelers", "joseph", "snoopy", "cowboys",
+           "eagles", "chicken", "ferrari", "knight", "melissa", "coffee", "johnny", "bulldog",
+           "root", "test", "demo", "user", "guest", "default", "pass", "toor"]
+
+pregens = ["password", "123456", "qwerty", "admin", "root", "letmein", "welcome", 
+           "monkey", "dragon", "master", "sunshine", "princess", "batman", "superman",
+           "test123", "password123", "admin123", "user", "guest", "demo", "default",
+           "pass123", "root123", "toor", "test"]
+
+// Try to import if files exist — these override fallbacks
+import_code("data/samples.src")
+import_code("data/pregens.src")
+
+list.unique = function
+	unique_array = []
+	for item in self
+		if unique_array.indexOf(item) == null then
+			unique_array.push(item)
+		end if
+	end for
+	return unique_array
+end function
+
+ChainSaw = {}
+ChainSaw.user = "root"
+ChainSaw.ip = ""
+ChainSaw.port = 22
+ChainSaw.password = ""
+ChainSaw.shell = null
+ChainSaw.samples = samples
+ChainSaw.pregens = pregens
+ChainSaw.chains = {}
+ChainSaw.min_length = 3
+ChainSaw.max_length = 9
+ChainSaw.order = 3
+ChainSaw.LogLevel = "INFO"
+ChainSaw.attempts = 0
+ChainSaw.testing = false
+ChainSaw.testing_pass = "Dessnap"
+ChainSaw._logLevels = {"DEBUG": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
+
+ChainSaw.Log = function(level, message)
+	if ChainSaw._logLevels[level] >= ChainSaw._logLevels[ChainSaw.LogLevel] then
+		out_str = "[ChainSaw] [" + level + "] " + message
+		if level == "ERROR" then
+			print("<color=red>" + out_str + "</color>")
+		else if level == "WARN" then
+			print("<color=yellow>" + out_str + "</color>")
+		else
+			print(out_str)
+		end if
+	end if
+end function
+
+ChainSaw.init = function
+	ChainSaw.load_samples()
+	ChainSaw.load_pregens()
+	ChainSaw.load_chains()
+end function
+
+ChainSaw.load_chains = function
+	ChainSaw.Log("DEBUG", "Building Markov chains...")
+	for text in ChainSaw.samples
+		for i in range(0, len(text) - ChainSaw.order - 1)
+			sub_text = text[i : i + ChainSaw.order]
+			if not ChainSaw.chains.hasIndex(sub_text) then
+				ChainSaw.chains[sub_text] = []
+			end if
+			next_char = text[i + ChainSaw.order]
+			if ChainSaw.chains[sub_text].indexOf(next_char) == null then
+				ChainSaw.chains[sub_text].push(next_char)
+			end if
+		end for
+	end for
+	ChainSaw.Log("DEBUG", len(ChainSaw.chains) + " chains created.")
+end function
+
+ChainSaw.load_samples = function
+	ChainSaw.Log("DEBUG", "Building samples...")
+	samples_list = ChainSaw.samples
+	ChainSaw.samples = []
+	for text in samples_list
+		if len(text) >= ChainSaw.order + 1 then
+			ChainSaw.samples.push(text.upper)
+		end if
+	end for
+	ChainSaw.Log("DEBUG", len(ChainSaw.samples) + " samples loaded.")
+end function
+
+ChainSaw.load_pregens = function
+	ChainSaw.Log("DEBUG", "Loading pregenerated passwords...")
+	pregens_list = ChainSaw.pregens
+	ChainSaw.pregens = []
+	for text in pregens_list
+		if len(text) >= ChainSaw.min_length and len(text) <= ChainSaw.max_length then
+			ChainSaw.pregens.push(text)
+		end if
+	end for
+end function
+
+ChainSaw.connect = function(password)
+	if ChainSaw.testing then
+		if password == ChainSaw.testing_pass then
+			return "shell"
+		end if
+		return null
+	end if
+	if ChainSaw.ip != "" and ChainSaw.port != null then
+		return get_shell.connect_service(ChainSaw.ip, ChainSaw.port, ChainSaw.user, password)
+	else
+		return get_shell(ChainSaw.user, password)
+	end if
+	return null
+end function
+
+ChainSaw.get_letter = function(token)
+	if not ChainSaw.chains.hasIndex(token) then
+		return "?"
+	end if
+	next_chars = ChainSaw.chains[token]
+	num = floor(rnd * len(next_chars))
+	return next_chars[num]
+end function
+
+ChainSaw.recurse = function(token, max_length)
+	password = token.lower
+	result = ChainSaw.connect(password)
+	ChainSaw.attempts = ChainSaw.attempts + 1
+	if result != null then
+		print("<b>[ChainSaw] Password found: " + password + "</b>")
+		ChainSaw.password = password
+		if not ChainSaw.testing then LearnPassword(password)
+		return result
+	else
+		upper_first_char = password[0].upper + password[1 : len(password)]
+		result = ChainSaw.connect(upper_first_char)
+		ChainSaw.attempts = ChainSaw.attempts + 1
+		if result != null then
+			print("<b>[ChainSaw] Password found: " + upper_first_char + "</b>")
+			ChainSaw.password = upper_first_char
+			if not ChainSaw.testing then LearnPassword(upper_first_char)
+			return result
+		end if
+	end if
+	if len(token) >= max_length then
+		return null
+	end if
+	start_idx = len(token) - ChainSaw.order
+	sub_text = token[start_idx : start_idx + ChainSaw.order]
+	if not ChainSaw.chains.hasIndex(sub_text) then
+		return null
+	end if
+	next_chars = ChainSaw.chains[sub_text]
+	for next_char in next_chars
+		new_password = token + next_char
+		result = ChainSaw.recurse(new_password, max_length)
+		if result != null then
+			return result
+		end if
+	end for
+end function
+
+ChainSaw.PregenAttack = function
+	ChainSaw.Log("INFO", "Attacking with pregenerated passwords...")
+	for password in ChainSaw.pregens
+		result = ChainSaw.connect(password)
+		ChainSaw.attempts = ChainSaw.attempts + 1
+		if result != null then
+			print("<b>[ChainSaw] Password found: " + password + "</b>")
+			ChainSaw.password = password
+			if not ChainSaw.testing then LearnPassword(password)
+			return result
+		else
+			upper_first_char = password[0].upper + password[1 : len(password)]
+			result = ChainSaw.connect(upper_first_char)
+			ChainSaw.attempts = ChainSaw.attempts + 1
+			if result != null then
+				print("<b>[ChainSaw] Password found: " + upper_first_char + "</b>")
+				ChainSaw.password = upper_first_char
+				if not ChainSaw.testing then LearnPassword(upper_first_char)
+				return result
+			end if
+		end if
+	end for
+	return null
+end function
+
+ChainSaw.crack = function(show_logo = true)
+	if show_logo then
+		ChainSaw.Log("INFO", "ChainSaw - The Markov Chain Password Cracker v" + version)
+		ChainSaw.Log("INFO", "VROOM!....")
+	end if
+	start_time = time
+	result = ChainSaw.PregenAttack
+	if result != null then
+		ChainSaw.shell = result
+		ChainSaw.Log("DEBUG", "Evaluated " + ChainSaw.attempts + " passwords.")
+		ChainSaw.Log("DEBUG", "Execution time: " + (time - start_time) + " seconds")
+		return result
+	end if
+	ChainSaw.Log("INFO", "No pregenerated passwords succeeded.")
+	ChainSaw.Log("INFO", "Attacking with markov chains...")
+	
+	// Safety check: if no chains, skip markov phase
+	if ChainSaw.chains.len == 0 then
+		ChainSaw.Log("WARN", "No Markov chains available (samples may not have loaded)")
+		ChainSaw.Log("DEBUG", "Evaluated " + ChainSaw.attempts + " passwords.")
+		ChainSaw.Log("DEBUG", "Execution time: " + (time - start_time) + " seconds")
+		return null
+	end if
+	
+	for i in range(0, len(ChainSaw.chains.indexes) - 1)
+		token = ChainSaw.chains.indexes[i]
+		result = ChainSaw.recurse(token, ChainSaw.max_length)
+		if result != null then
+			ChainSaw.shell = result
+			ChainSaw.Log("DEBUG", "Evaluated " + ChainSaw.attempts + " passwords.")
+			ChainSaw.Log("DEBUG", "Execution time: " + (time - start_time) + " seconds")
+			return result
+		end if
+	end for
+end function
+
+ChainSaw.parse_params = function(param_list)
+	for param in param_list
+		if len(param.split("=")) == 2 then
+			key = param.split("=")[0]
+			value = param.split("=")[1]
+			if key == "--loglevel" then
+				ChainSaw.LogLevel = value.upper
+			else if key == "--user" then
+				ChainSaw.user = value
+			else if key == "--ip" then
+				ChainSaw.ip = value
+			else if key == "--port" then
+				ChainSaw.port = value.to_int
+			else if key == "--min_length" then
+				ChainSaw.min_length = value.to_int
+			else if key == "--max_length" then
+				ChainSaw.max_length = value.to_int
+			else if key == "--order" then
+				ChainSaw.order = value.to_int
+			else if key == "--test_pass" then
+				globals.testing_pass = value
+			end if
+		end if
+	end for
+end function
+
+ChainSaw.load = function
+	get_custom_object.chainsaw = ChainSaw
+	ChainSaw.Log("INFO", "ChainSaw loaded into GCO as 'chainsaw'.")
+end function
+
+// modules — debug: lists whatever plugin modules loaded at startup
+// from /root/ai/pt/modules/*.cfg, and how many commands each added.
+// Same spirit as activelib/libdebug: quick introspection, not a
+// management command.
+CmdModules = function(inp)
+	gcoM = get_custom_object
+	if not gcoM.hasIndex("modules") or gcoM.modules.len == 0 then
+		print(c.grey + "modules: none loaded" + c.ennd)
+		return
+	end if
+	print(c.cyan + "<b>loaded modules:" + c.ennd)
+	for modName in gcoM.modules.indexes
+		modTable = gcoM.modules[modName]
+		cmdNames = []
+		if modTable and modTable.hasIndex("commands") then
+			cmdNames = modTable.commands.indexes
+		end if
+		print(c.gold + "  " + modName + c.ennd + c.grey + "  (" + cmdNames.join(", ") + ")" + c.ennd)
+	end for
+end function
+CommandTable["modules"] = @CmdModules
+
+// ── monitor / top ────────────────────────────────────────────────
+// top/htop-style auto-refreshing dashboard: process list + open
+// port count for the held object if one's active, else the local
+// machine. GreyScript has no non-blocking keypress check, so like
+// a real top/htop this just runs on a loop until interrupted
+// (ctrl+c) or the optional -n cap is hit.
+CmdMonitor = function(inp)
+	target = myComp
+	label  = "local"
+	if globals.object then
+		if typeof(globals.object) == "shell" then
+			target = globals.object.host_computer
+		else if typeof(globals.object) == "computer" then
+			target = globals.object
+		end if
+		label = target.public_ip
+	end if
+
+	interval = 2
+	cycles   = 9999
+	i = 1
+	while i <= inp.len - 1
+		if inp[i] == "-i" and i + 1 <= inp.len - 1 then
+			interval = inp[i + 1].to_int
+			i = i + 1
+		else if inp[i] == "-n" and i + 1 <= inp.len - 1 then
+			cycles = inp[i + 1].to_int
+			i = i + 1
+		end if
+		i = i + 1
+	end while
+	if interval < 1 then interval = 1
+	if cycles < 1 then cycles = 1
+
+	tick = 0
+	while tick < cycles
+		clear_screen
+		print(c.cyan + "<b>phantom monitor</b>" + c.ennd + c.grey + "  target: " + c.ennd + c.gold + label + c.ennd + c.grey + "  refresh: " + interval + "s  tick: " + tick + "  (ctrl+c to quit)" + c.ennd)
+		print(c.grey + "----------------------------------------------------------------" + c.ennd)
+
+		pts = target.get_ports
+		openCount = 0
+		totalCount = 0
+		if pts then
+			totalCount = pts.len
+			for p in pts
+				if p.is_closed == 0 then openCount = openCount + 1
+			end for
+		end if
+		print(c.white + "<b>ports</b>" + c.ennd + c.grey + "  " + openCount + " open / " + totalCount + " total" + c.ennd)
+
+		print(c.white + "<b>processes</b>" + c.ennd)
+		procStr = target.show_procs
+		if procStr and procStr != "" then
+			print(format_columns(procStr))
+		else
+			print(c.grey + "  (no processes)" + c.ennd)
+		end if
+
+		wait(interval)
+		tick = tick + 1
+	end while
+	print(c.yellow + "<b>monitor: stopped after " + tick + " refresh(es)" + c.ennd)
+end function
+CommandTable["monitor"] = @CmdMonitor
+CommandTable["top"] = @CmdMonitor
