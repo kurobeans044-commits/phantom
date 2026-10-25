@@ -1,0 +1,3589 @@
+// ================================================================
+//  ops.src  |  phantom module  |  file ops, recon primitives,
+//             exploitation, password cracking, help
+// ================================================================
+
+// ── Cmd wrappers — each self-registers into CommandTable right after ─────
+// ── its own definition (see the CommandTable[...] line below it) ─────
+CmdHelp = function(inp)
+    if inp.len == 1 then ShowHelp(null) else ShowHelp(inp[1])
+end function
+CommandTable["help"] = @CmdHelp
+
+CmdTree = function(inp)
+    path = myPath
+    if inp.len == 2 then path = inp[1]
+    Tree(path, myComp, true, null)
+end function
+CommandTable["tree"] = @CmdTree
+
+CmdLs = function(inp)
+    Ls(inp, myPath, myComp, true)
+end function
+CommandTable["ls"] = @CmdLs
+
+CmdCd = function(inp)
+    if inp.len == 1 then
+        globals.myPath = currentPath
+    else if inp[1] == ".." then
+        f = myComp.File(myPath).parent
+        if f then globals.myPath = f.path
+    else
+        f = GetFile(inp[1], myComp, true)
+        if f and f.is_folder then
+            globals.myPath = f.path
+        else
+            print(c.yellow + "<b>cd: not found" + c.ennd)
+        end if
+    end if
+end function
+CommandTable["cd"] = @CmdCd
+
+CmdCat = function(inp)
+    if inp.len == 2 then Cat(inp[1], myComp, true) else print("<b>Usage: cat [file]")
+end function
+CommandTable["cat"] = @CmdCat
+
+CmdMacref = function(inp)
+    MacroRef
+end function
+CommandTable["macref"] = @CmdMacref
+
+CmdCp = function(inp)
+    if inp.len == 3 then Cp(inp[1], inp[2], myComp, true) else print("<b>Usage: cp [src] [dst]")
+end function
+CommandTable["cp"] = @CmdCp
+
+CmdMv = function(inp)
+    if inp.len == 3 then Mv(inp[1], inp[2], myComp, true) else print("<b>Usage: mv [src] [dst]")
+end function
+CommandTable["mv"] = @CmdMv
+
+CmdRm = function(inp)
+    if inp.len == 2 then
+        Rm(inp[1], false, myComp, true)
+    else if inp.len == 3 and inp[1] == "-r" then
+        Rm(inp[2], true, myComp, true)
+    else
+        print("<b>Usage: rm [opt:-r] [path]")
+    end if
+end function
+CommandTable["rm"] = @CmdRm
+
+CmdMkdir = function(inp)
+    if inp.len == 2 then Mkdir(inp[1], myComp, true) else print("<b>Usage: mkdir [path]")
+end function
+CommandTable["mkdir"] = @CmdMkdir
+
+CmdTouch = function(inp)
+    if inp.len == 2 then Touch(inp[1], myComp, true) else print("<b>Usage: touch [path/file]")
+end function
+CommandTable["touch"] = @CmdTouch
+
+CmdChmod = function(inp)
+    if inp.len == 3 then
+        Chmod(inp[1], inp[2], false, myComp, true)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chmod(inp[2], inp[3], true, myComp, true)
+    else
+        print("<b>Usage: chmod [opt:-R] [perms] [path]")
+    end if
+end function
+CommandTable["chmod"] = @CmdChmod
+
+CmdChown = function(inp)
+    if inp.len == 3 then
+        Chown(inp[1], inp[2], false, myComp, true)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chown(inp[2], inp[3], true, myComp, true)
+    else
+        print("<b>Usage: chown [opt:-R] [owner] [path]")
+    end if
+end function
+CommandTable["chown"] = @CmdChown
+
+CmdChgrp = function(inp)
+    if inp.len == 3 then
+        Chgrp(inp[1], inp[2], false, myComp, true)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chgrp(inp[2], inp[3], true, myComp, true)
+    else
+        print("<b>Usage: chgrp [opt:-R] [group] [path]")
+    end if
+end function
+CommandTable["chgrp"] = @CmdChgrp
+
+CmdSearch = function(inp)
+    if inp.len == 1 then Search("", myComp) else Search(inp[1], myComp)
+end function
+CommandTable["search"] = @CmdSearch
+
+CmdPs = function(inp)
+    print(myComp.show_procs)
+end function
+CommandTable["ps"] = @CmdPs
+
+CmdKill = function(inp)
+    if inp.len >= 2 then Kill(inp[1], myComp) else print("<b>Usage: kill [PID]")
+end function
+CommandTable["kill"] = @CmdKill
+
+CmdPasswd = function(inp)
+    if inp.len == 2 then Passwd(inp[1], myComp) else print("<b>Usage: passwd [user]")
+end function
+CommandTable["passwd"] = @CmdPasswd
+
+CmdUseradd = function(inp)
+    if inp.len == 2 then UserAdd(inp[1], myComp) else print("<b>Usage: useradd [user]")
+end function
+CommandTable["useradd"] = @CmdUseradd
+
+CmdUserdel = function(inp)
+    if inp.len == 2 then
+        UserDel(inp[1], false, myComp)
+    else if inp.len == 3 and inp[1] == "-r" then
+        UserDel(inp[2], true, myComp)
+    else
+        print("<b>Usage: userdel [opt:-r] [user]")
+    end if
+end function
+CommandTable["userdel"] = @CmdUserdel
+
+CmdPwd = function(inp)
+    print(myPath)
+end function
+CommandTable["pwd"] = @CmdPwd
+
+CmdWhoami = function(inp)
+    print(active_user)
+end function
+CommandTable["whoami"] = @CmdWhoami
+
+CmdClear = function(inp)
+    clear_screen
+end function
+CommandTable["clear"] = @CmdClear
+
+CmdDecipher = function(inp)
+    if inp.len == 3 then
+        Decipher(inp[1], inp[2], myComp)
+    else if inp.len == 2 then
+        DecipherBatch(inp[1])
+    else if pipeResult != "" then
+        DecipherBatch(pipeResult)
+    else
+        print("<b>Usage: decipher [-h user:hash] [-f /path/file]" + char(10) + "-- or decipher @clip / harvest | clip @a | decipher to crack an entire comma-separated user:hash list at once")
+    end if
+end function
+CommandTable["decipher"] = @CmdDecipher
+
+CmdCorlog = function(inp)
+    if inp.len >= 2 and inp[1] == "--stack" then
+        CmdCorlogstack(inp)
+    else if inp.len >= 2 and inp[1] == "-r" then
+        CorruptLog(object, false)
+    else
+        CorruptLog(myComp, false)
+    end if
+end function
+CommandTable["corlog"] = @CmdCorlog
+
+CmdEscalate = function(inp)
+    Escalate(myComp)
+end function
+CommandTable["escalate"] = @CmdEscalate
+
+CmdDrop = function(inp)
+    if inp.len == 2 then Drop(inp[1]) else print("<b>Usage: drop [-r] [-l]")
+end function
+CommandTable["drop"] = @CmdDrop
+
+CmdTerminal = function(inp)
+    ans = user_input("Open local terminal? (y/n): ")
+    if ans == "y" then myShell.start_terminal
+end function
+CommandTable["terminal"] = @CmdTerminal
+
+// inp[0] is the raw "./binname" token
+CmdLocalBinary = function(inp)
+    cmd = inp[0]
+    f = GetFile(cmd[2:], myComp, true)
+    if not f then
+        print(c.yellow + "<b>./: not found: " + cmd[2:] + c.ennd)
+    else if not f.is_binary then
+        print(c.yellow + "<b>./: not a binary" + c.ennd)
+    else if inp.len > 1 then
+        myShell.launch(f.path, inp[1:].join(" "))
+    else
+        myShell.launch(f.path)
+    end if
+end function
+
+CmdRandip = function(inp)
+    if inp.len >= 2 then
+        RandIp(inp[1].to_int)
+    else
+        RandIp(1)
+    end if
+end function
+CommandTable["randip"] = @CmdRandip
+
+CmdIpenum = function(inp)
+    if inp.len < 2 then
+        print(c.yellow + "<b>usage: ipenum [port] [opt:@var]" + c.ennd)
+    else
+        sv = null
+        if inp.len >= 3 then
+            sv = inp[2]
+            if sv[0:1] == "@" then sv = sv[1:]
+        end if
+        IpEnum(inp[1], sv)
+    end if
+end function
+CommandTable["ipenum"] = @CmdIpenum
+
+CmdPing = function(inp)
+    if inp.len == 2 then Ping(inp[1], myShell) else print("<b>Usage: ping [ip/pt/lt/bt]")
+end function
+CommandTable["ping"] = @CmdPing
+
+CmdNslookup = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: nslookup <domain or ip> [@var]")
+    else
+        result = Nslookup([inp[1]])
+        if result != null then
+            globals.pipeResult = result
+            if inp.len >= 3 then
+                k = inp[2]
+                if k[0:1] == "@" then k = k[1:]
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[k] = result
+                pipeVars[k] = result
+                print(c.lime + "  @" + k + " = " + result + c.ennd)
+            end if
+        else
+            globals.pipeFailed = true
+        end if
+    end if
+end function
+CommandTable["nslookup"] = @CmdNslookup
+
+CmdWhois = function(inp)
+    if inp.len == 2 then Whois(inp[1]) else print("<b>Usage: whois [public ip]")
+end function
+CommandTable["whois"] = @CmdWhois
+
+CmdWhoismail = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: whoismail <ip> [@var]")
+        print(c.grey + "  extracts admin email from whois and clips it" + c.ennd)
+    else
+        wip = inp[1]
+        if wip == "pt" then wip = publicTarget
+        if not is_valid_ip(wip) or is_lan_ip(wip) then
+            print(c.yellow + "<b>whoismail: need a public ip" + c.ennd)
+            globals.pipeFailed = true
+        else
+            wdata = whois(wip)
+            wemail = null
+            for wline in wdata.split(char(10))
+                if wline.indexOf("@") != null then
+                    for wpart in wline.split(" ")
+                        if wpart.indexOf("@") != null then
+                            wemail = wpart
+                        end if
+                        if wemail != null then break
+                    end for
+                end if
+                if wemail != null then break
+            end for
+            if wemail == null or wemail == "" then
+                print(c.yellow + "<b>whoismail: no email found in whois for " + wip + c.ennd)
+                globals.pipeFailed = true
+            else
+                print(c.cyan + "whoismail: " + wemail + c.ennd)
+                globals.pipeResult = wemail
+                k = "email"
+                if inp.len >= 3 then
+                    k = inp[2]
+                    if k[0:1] == "@" then k = k[1:]
+                end if
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[k] = wemail
+                pipeVars[k] = wemail
+                print(c.lime + "  @" + k + " = " + wemail + c.ennd)
+            end if
+        end if
+    end if
+end function
+CommandTable["whoismail"] = @CmdWhoismail
+
+CmdIfconfig = function(inp)
+    Ifconfig(myComp)
+end function
+CommandTable["ifconfig"] = @CmdIfconfig
+
+CmdSet = function(inp)
+    if inp.len == 2 then
+        SetTarget(inp[1], null)
+        globals.pipeResult = inp[1]
+        globals.pipeVars["p"] = inp[1]
+    else if inp.len == 3 then
+        SetTarget(inp[1], inp[2])
+        globals.pipeResult = inp[1]
+        globals.pipeVars["p"] = inp[1]
+    else
+        print("<b>Usage: set [ip] [opt:-b]")
+    end if
+end function
+CommandTable["set"] = @CmdSet
+
+CmdUnset = function(inp)
+    if inp.len == 2 then
+        if inp[1] == "-p" or inp[1] == "-a" then globals.publicTarget = ""
+        if inp[1] == "-l" or inp[1] == "-a" then globals.localTarget  = ""
+        if inp[1] == "-b" or inp[1] == "-a" then globals.bounceTarget = ""
+    else
+        print("<b>Usage: unset [-p] [-l] [-b] [-a]")
+    end if
+end function
+CommandTable["unset"] = @CmdUnset
+
+CmdScp = function(inp)
+    if inp.len >= 4 then Scp(inp[1], inp[2], inp[3]) else print("<b>Usage: scp [-u|-d] [src] [dst]")
+end function
+CommandTable["scp"] = @CmdScp
+
+CmdNmap = function(inp)
+    autoYes = inp.indexOf("-y") != null
+    args = []
+    for a in inp[1:]
+        if a != "-y" then args.push(a)
+    end for
+    if args.len == 1 then
+        Nmap(args[0], myComp, macroName != "" or autoYes, autoYes)
+    else
+        print("<b>Usage: nmap [ip/pt/lt] [-y]")
+    end if
+end function
+CommandTable["nmap"] = @CmdNmap
+
+CmdScan = function(inp)
+    if inp.len == 3 and inp[1] == "-l" then
+        Scan("-l", inp[2], myComp, null, null)
+    else if inp.len == 4 and inp[1] == "-l" then
+        Scan("-l", inp[2], myComp, inp[3], null)
+    else if inp.len == 3 then
+        Scan(inp[1], inp[2], myComp, null, null)
+    else if inp.len == 4 then
+        Scan(inp[1], inp[2], myComp, inp[3], null)
+    else if inp.len == 6 and inp[4] == "-lib" then
+        // no mem/val given — ScanRemoteLib used to default these to
+        // "0x1F000FB5"/"length" (init.so's specific known-weak pair),
+        // silently trying that against WHATEVER lib you named, which
+        // only ever worked by coincidence. inp[1]/inp[2] (ip/port) were
+        // also never actually used inside ScanRemoteLib — it always
+        // operated on the currently held `object` regardless. LibScan
+        // (scanlib's own implementation) already does exactly what
+        // this needs — checks db.txt-known exploits for the named
+        // lib+version first, falls back to a real scan/decode if none
+        // exist — so delegate to that instead of duplicating it here.
+        LibScan(inp[5], inp[3], false)
+    else if inp.len == 8 and inp[4] == "-lib" then
+        // explicit mem/val given — a deliberate manual override (e.g.
+        // you already know the working pair from a scanlib/grab run
+        // elsewhere), not something that needs auto-detection
+        ScanRemoteLib(inp[1], inp[2], inp[3], inp[5], inp[6], inp[7])
+    else
+        print("<b>Usage: scan [ip] [port]")
+        print(c.grey + "  LAN IPs are detected automatically when holding a shell" + c.ennd)
+        print(c.grey + "  scan -l [lib]              scan local lib" + c.ennd)
+        print(c.grey + "  scan [ip] [port] [lanip] -lib [lib.so]  remote lib scan — checks db.txt-known exploits first, full scan/decode fallback" + c.ennd)
+        print(c.grey + "  scan [ip] [port] [lanip] -lib [lib.so] [mem] [val]  same, but force this exact mem/val instead of auto-detecting" + c.ennd)
+    end if
+end function
+CommandTable["scan"] = @CmdScan
+
+
+// metaxploit-free port scan — uses get_router().used_ports instead of
+// net_use, so it works when metaxploit.so isn't loaded. PUBLIC ips only
+// (get_router needs a routable address); recon only, no exploit session.
+// portFilter: list of port strings to limit to, or [] for all open.
+PortsRouter = function(targets, portFilter)
+    openIps = []
+    lastOpen = ""
+    for tgt in targets
+        if tgt == "" then continue
+        r = get_router(tgt)
+        if not r then
+            print(c.grey + "  [-] " + tgt + " — no router (LAN ip or unreachable)" + c.ennd)
+            continue
+        end if
+        ups = r.used_ports
+        if not ups or ups.len == 0 then
+            print(c.grey + "  [-] " + tgt + " — no open ports" + c.ennd)
+            continue
+        end if
+        found = []
+        for p in ups
+            pn = "" + p.port_number
+            if portFilter.len > 0 and portFilter.indexOf(pn) == null then continue
+            if p.is_closed then continue
+            print(c.lime + "  [+] " + tgt + "  " + pn + " open  (lan " + p.get_lan_ip + ")" + c.ennd)
+            found.push(pn)
+            lastOpen = pn
+        end for
+        if found.len > 0 then openIps.push(tgt)
+    end for
+    if openIps.len > 0 then
+        globals.pipeResult = openIps.join(",")
+        globals.pipeVars["port"] = lastOpen
+        print(c.cyan + "ports: " + openIps.len + "/" + targets.len + " ip(s) with an open port — " + openIps.join(", ") + c.ennd)
+    else
+        globals.pipeFailed = true
+        print(c.yellow + "<b>ports: no open ports found" + c.ennd)
+    end if
+end function
+
+CmdGrab = function(inp)
+    autoPush       = inp.indexOf("-push") != null
+    acceptComputer = inp.indexOf("-c")   != null
+    args = []
+    for a in inp[1:]
+        if a != "-push" and a != "-c" then args.push(a)
+    end for
+    if args.len == 2 then
+        Grab(args[0], args[1], null, null, null, acceptComputer)
+    else if args.len == 4 then
+        Grab(args[0], args[1], args[2], args[3], null, acceptComputer)
+    else if args.len == 5 then
+        Grab(args[0], args[1], args[2], args[3], args[4], acceptComputer)
+    else
+        print("<b>Usage: grab [ip] [port] [opt:mem] [opt:val] [opt:inject] [opt:-c] [opt:-push]")
+        print(c.grey + "  -c      accept computer objects (not just shells)" + c.ennd)
+        print(c.grey + "  -push   push result onto stack automatically" + c.ennd)
+    end if
+    if autoPush and (typeof(object) == "shell" or (acceptComputer and typeof(object) == "computer")) then
+        objectStack.push(object)
+        print(c.lime + "  [+] pushed to stack [" + objectStack.len + "]" + c.ennd)
+    end if
+end function
+CommandTable["grab"] = @CmdGrab
+
+CmdGetroot = function(inp)
+    if inp.len == 3 and object then
+        GetRoot(inp[1], inp[2], object)
+    else if inp.len == 3 then
+        print(c.yellow + "<b>getroot: not holding remote shell" + c.ennd)
+    else
+        print("<b>Usage: getroot [path] [password]")
+    end if
+end function
+CommandTable["getroot"] = @CmdGetroot
+
+CmdEnum = function(inp)
+    if inp.len != 2 then
+        print("<b>Usage: enum [-l] [-r]")
+    else if inp[1] == "-l" then
+        if lObject then Enum(lObject, lObject) else Enum(myComp, myComp)
+    else if inp[1] == "-r" then
+        if not object then
+            print(c.yellow + "<b>enum: not holding remote object" + c.ennd)
+        else if lObject then
+            Enum(lObject, object)
+        else
+            Enum(myComp, object)
+        end if
+    end if
+end function
+CommandTable["enum"] = @CmdEnum
+
+CmdRouterdata = function(inp)
+    if inp.len == 2 then
+        RouterData(inp[1], null)
+    else if inp.len == 3 then
+        RouterData(inp[1], inp[2])
+    else
+        print("<b>Usage: routerdata [ip] [opt:port]")
+    end if
+end function
+CommandTable["routerdata"] = @CmdRouterdata
+
+// inp[0] is the raw "r./binname" token
+CmdRemoteBinary = function(inp)
+    cmd = inp[0]
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>r./: not holding remote shell" + c.ennd)
+    else
+        rcomp = object.host_computer
+        bname = cmd[3:]
+        f = null
+        if bname.len > 0 and bname[0] == "/" then
+            f = rcomp.File(bname)
+        else
+            searchPaths = [remotePath, "/root", "/home/guest", "/bin", "/usr/bin"]
+            for sp in searchPaths
+                candidate = rcomp.File(sp + "/" + bname)
+                if candidate then
+                    f = candidate
+                    break
+                end if
+            end for
+        end if
+        if not f then
+            print(c.yellow + "<b>r./: not found: " + bname + c.ennd)
+        else if not f.is_binary then
+            print(c.yellow + "<b>r./: not a binary: " + f.path + c.ennd)
+        else if inp.len > 1 then
+            object.launch(f.path, inp[1:].join(" "))
+        else
+            object.launch(f.path)
+        end if
+    end if
+end function
+
+CmdAr = function(inp)
+    if inp.indexOf("-l") != null then
+        userArg = null
+        lIdx = inp.indexOf("-l")
+        if lIdx + 1 < inp.len then userArg = inp[lIdx + 1]
+        ArLocal(userArg)
+    else
+        ar(null, null, null)
+    end if
+end function
+CommandTable["ar"] = @CmdAr
+
+CmdAstack = function(inp)
+    libArg = "init.so"
+    libIdx = inp.indexOf("--lib")
+    if libIdx != null and libIdx < inp.len - 1 then
+        libArg = inp[libIdx + 1]
+    end if
+    astack(libArg)
+end function
+CommandTable["astack"] = @CmdAstack
+
+CmdAutoroot = function(inp)
+    if inp.indexOf("-l") != null then
+        userArg = null
+        lIdx = inp.indexOf("-l")
+        if lIdx + 1 < inp.len then userArg = inp[lIdx + 1]
+        ArLocal(userArg)
+    else if inp.indexOf("--stack") != null then
+        // ChainSaw deploy to all stack objects
+        if objectStack.len == 0 then
+            print(c.yellow + "<b>autoroot --stack: stack is empty" + c.ennd)
+        else
+            print(c.orange + "Loading ChainSaw..." + c.ennd)
+            ChainSaw.load
+            wait(1)
+
+            print(char(10) + c.cyan + "<b>AUTOROOT STACK (ChainSaw)" + c.ennd)
+            print(c.grey + "  targeting " + objectStack.len + " object(s)" + c.ennd)
+            print(c.grey + "================================================================" + c.ennd)
+            savedObject = globals.object
+            savedPath   = globals.remotePath
+            rooted = 0
+            idx = 1
+            stackI = 0
+            while stackI < objectStack.len
+                stackObj = objectStack[stackI]
+                stackI = stackI + 1
+                if typeof(stackObj) != "shell" then
+                    idx = idx + 1
+                    continue
+                end if
+                if IsRoot(stackObj) then
+                    print(char(10) + c.lime + "[" + idx + "/" + objectStack.len + "] " + stackObj.host_computer.public_ip + " — already root" + c.ennd)
+                    rooted = rooted + 1
+                    idx = idx + 1
+                    continue
+                end if
+                globals.object = stackObj
+                globals.remotePath = "/"
+                comp = stackObj.host_computer
+                print(char(10) + c.orange + "[" + idx + "/" + objectStack.len + "] " + comp.public_ip + c.ennd)
+
+                rcePath = "/home/guest"
+                rceName = "chainsaw_rce"
+                rceSrc = rcePath + "/" + rceName + ".src"
+
+                n = char(10)
+                rceLines = []
+                rceLines.push("chainsaw = get_custom_object.chainsaw")
+                rceLines.push("chainsaw.load_samples")
+                rceLines.push("chainsaw.load_pregens")
+                rceLines.push("chainsaw.load_chains")
+                rceLines.push("chainsaw.crack(false)")
+                rceString = rceLines.join(n)
+
+                comp.touch(rcePath, rceName + ".src")
+                rceFile = comp.File(rceSrc)
+                if not rceFile then
+                    print(c.yellow + "  could not create RCE script" + c.ennd)
+                else
+                    rceFile.set_content(rceString)
+                    print(c.grey + "  building chainsaw_rce..." + c.ennd)
+                    buildRes = stackObj.build(rceSrc, rcePath)
+                    if typeof(buildRes) == "string" and buildRes != "" then
+                        print(c.yellow + "  build failed: " + buildRes + c.ennd)
+                    else
+                        // clear any shell left over from a previous target so a
+                        // ChainSaw failure here can't read as a false success
+                        gcoCS = get_custom_object
+                        if gcoCS.hasIndex("chainsaw") then gcoCS.chainsaw.shell = null
+
+                        print(c.grey + "  launching ChainSaw..." + c.ennd)
+                        stackObj.launch(rcePath + "/" + rceName)
+                        wait(2)
+
+                        if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
+                            rootShell = gcoCS.chainsaw.shell
+                            // write the root shell back into the stack slot
+                            objectStack[stackI - 1] = rootShell
+                            globals.object = rootShell
+                            globals.remotePath = "/"
+                            print(c.green + "  [+] rooted via ChainSaw" + c.ennd)
+                            print(c.gold + "      password: " + gcoCS.chainsaw.password + c.ennd)
+
+                            print(c.orange + "  planting weaklib..." + c.ennd)
+                            PlantToObject(["libhttp.so"], "/lib")
+
+                            rooted = rooted + 1
+                        else
+                            print(c.yellow + "  ChainSaw failed" + c.ennd)
+                        end if
+                    end if
+                end if
+                idx = idx + 1
+            end while
+            globals.object = savedObject
+            globals.remotePath = savedPath
+            div
+            print(c.cyan + "<b>autoroot --stack complete — " + rooted + "/" + objectStack.len + " rooted" + c.ennd)
+        end if
+    else if inp.len == 1 or inp.len == 4 then
+        // Single target mode: autoroot (held shell) OR autoroot [ip] [user] [pass] (ignored, uses held shell)
+        if not object or typeof(object) != "shell" then
+            print(c.yellow + "<b>autoroot: need a remote shell to deploy ChainSaw" + c.ennd)
+        else
+            print(c.orange + "Loading ChainSaw..." + c.ennd)
+
+            comp = object.host_computer
+            print(char(10) + c.cyan + "<b>AUTOROOT (ChainSaw)" + c.ennd)
+            print(c.grey + "  target: " + comp.public_ip + c.ennd)
+
+            rcePath = "/home/guest"
+            rceName = "chainsaw_rce"
+            rceSrc = rcePath + "/" + rceName + ".src"
+
+            n = char(10)
+            rceLines = []
+            rceLines.push("chainsaw = get_custom_object.chainsaw")
+            rceLines.push("chainsaw.load_samples")
+            rceLines.push("chainsaw.load_pregens")
+            rceLines.push("chainsaw.load_chains")
+            rceLines.push("chainsaw.crack(false)")
+            rceString = rceLines.join(n)
+
+            comp.touch(rcePath, rceName + ".src")
+            rceFile = comp.File(rceSrc)
+            if not rceFile then
+                print(c.yellow + "  could not create RCE script" + c.ennd)
+            else
+                rceFile.set_content(rceString)
+                print(c.orange + "  building chainsaw_rce..." + c.ennd)
+                buildRes = object.build(rceSrc, rcePath)
+                if typeof(buildRes) == "string" and buildRes != "" then
+                    print(c.yellow + "  build failed: " + buildRes + c.ennd)
+                else
+                    print(c.orange + "  launching ChainSaw..." + c.ennd)
+                    object.launch(rcePath + "/" + rceName)
+                    wait(2)
+
+                    gcoCS = get_custom_object
+                    if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
+                        globals.object = gcoCS.chainsaw.shell
+                        globals.remotePath = "/"
+                        print(c.green + "<b>[+] ROOTED via ChainSaw!" + c.ennd)
+                        print(c.gold + "  password: " + gcoCS.chainsaw.password + c.ennd)
+
+                        print(c.orange + "  planting weaklib..." + c.ennd)
+                        PlantToObject(["libhttp.so"], "/lib")
+                    else
+                        print(c.yellow + "  ChainSaw failed" + c.ennd)
+                    end if
+                end if
+            end if
+        end if
+    else
+        print("<b>Usage: autoroot  |  autoroot --stack  |  autoroot dict [pw1 pw2...]")
+    end if
+end function
+CommandTable["autoroot"] = @CmdAutoroot
+
+CmdLanenum = function(inp)
+    localMode = inp.indexOf("-l") != null
+    args = []
+    for a in inp[1:]
+        if a != "-l" then args.push(a)
+    end for
+    sv = null
+    if args.len >= 1 then
+        sv = args[0]
+        if sv[0:1] == "@" then sv = sv[1:]
+    end if
+    LanEnum(sv, localMode)
+end function
+CommandTable["lanenum"] = @CmdLanenum
+
+CmdStackgrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stackgrep <pattern> [path] [@var]")
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stackgrep: stack is empty" + c.ennd)
+    else
+        path = "/"
+        storeKey = null
+        if inp.len >= 3 and inp[-1][0:1] == "@" then
+            storeKey = inp[-1][1:]
+            path = inp[2:-1].join(" ")
+        else if inp.len >= 3 then
+            path = inp[2]
+        end if
+        allMatches = []
+        i = 1
+        for obj in objectStack
+            if typeof(obj) != "shell" and typeof(obj) != "computer" then
+                i = i + 1
+                continue
+            end if
+            comp = obj
+            if typeof(obj) == "shell" then comp = obj.host_computer
+            print(c.cyan + "<b>[" + i + "] " + comp.public_ip + c.ennd + c.grey + "  lan:" + comp.local_ip + c.ennd)
+            lines3 = RGrep(inp[1], path, obj)
+            if lines3 != null then
+                for ml in lines3
+                    allMatches.push(ml)
+                end for
+            end if
+            i = i + 1
+        end for
+        div
+        print(c.cyan + "stackgrep: " + allMatches.len + " total match(es) across " + objectStack.len + " object(s)" + c.ennd)
+        if allMatches.len > 0 then
+            joined = allMatches.join(",")
+            globals.pipeResult = joined
+            if storeKey != null then
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[storeKey] = joined
+                pipeVars[storeKey] = joined
+                print(c.lime + "  @" + storeKey + " = " + joined + c.ennd)
+            end if
+        else
+            globals.pipeFailed = true
+        end if
+    end if
+end function
+CommandTable["stackgrep"] = @CmdStackgrep
+
+CmdStackfind = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stackfind <pattern> [path] [@var]")
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stackfind: stack is empty" + c.ennd)
+    else
+        path = "/"
+        storeKey = null
+        if inp.len >= 3 and inp[-1][0:1] == "@" then
+            storeKey = inp[-1][1:]
+            path = inp[2:-1].join(" ")
+        else if inp.len >= 3 then
+            path = inp[2]
+        end if
+        total = 0
+        i = 1
+        allMatches = []
+        for obj in objectStack
+            if typeof(obj) != "shell" and typeof(obj) != "computer" then
+                i = i + 1
+                continue
+            end if
+            comp = obj
+            if typeof(obj) == "shell" then comp = obj.host_computer
+            print(c.cyan + "<b>[" + i + "] " + comp.public_ip + c.ennd + c.grey + "  lan:" + comp.local_ip + c.ennd)
+            n = RFind(inp[1], path, obj, allMatches)
+            total = total + n
+            i = i + 1
+        end for
+        div
+        print(c.cyan + "stackfind: " + total + " total result(s) across " + objectStack.len + " object(s)" + c.ennd)
+        if total > 0 then
+            joined = allMatches.join(",")
+            globals.pipeResult = joined
+            if storeKey != null then
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[storeKey] = joined
+                pipeVars[storeKey] = joined
+                print(c.lime + "  @" + storeKey + " = " + joined + c.ennd)
+            end if
+        end if
+    end if
+end function
+CommandTable["stackfind"] = @CmdStackfind
+
+CmdCrack = function(inp)
+    if inp.len == 2 then
+        if not gco.hasIndex("rt") or gco.rt == null then buildRainbowTable
+        result = CrackHash(inp[1])
+        if result then
+            print(c.gold + "<b>cracked: " + result + c.ennd)
+        else
+            print(c.yellow + "<b>crack: hash not found in table" + c.ennd)
+        end if
+    else
+        print("<b>Usage: crack [hash]")
+    end if
+end function
+CommandTable["crack"] = @CmdCrack
+
+CmdBuildrt = function(inp)
+    // buildrt [order] [minLen] [maxLen]
+    // defaults: order=3 min=3 max=12  →  ~48k passwords
+    // example:  buildrt 2 3 14        →  ~200k+ passwords
+    oA = null
+    mnA = null
+    mxA = null
+    if inp.len >= 2 then oA  = inp[1].to_int
+    if inp.len >= 3 then mnA = inp[2].to_int
+    if inp.len >= 4 then mxA = inp[3].to_int
+    gco.rt = null
+    buildRainbowTable(oA, mnA, mxA)
+end function
+CommandTable["buildrt"] = @CmdBuildrt
+
+CmdRtgen = function(inp)
+    // rtgen [order] [minLen] [maxLen]
+    oA = null
+    mnA = null
+    mxA = null
+    if inp.len >= 2 then oA  = inp[1].to_int
+    if inp.len >= 3 then mnA = inp[2].to_int
+    if inp.len >= 4 then mxA = inp[3].to_int
+    RTGen(oA, mnA, mxA)
+end function
+CommandTable["rtgen"] = @CmdRtgen
+
+// -- IsRoot -------------------------------------------------------
+// Returns true if the given shell has root-level write access
+IsRoot = function(sh)
+    if typeof(sh) != "shell" then return false
+    f = sh.host_computer.File("/etc/passwd")
+    if not f then return false
+    return f.has_permission("w")
+end function
+
+// -- GetUserCtx -----------------------------------------------------
+// Same /etc/passwd write-permission check as IsRoot, but works for
+// computer objects too (not just shells) and returns "root"/"guest"
+// instead of a bool — used to record which user context an exploit
+// actually landed, for exploit's candidate history display.
+GetUserCtx = function(obj)
+    if typeof(obj) != "shell" and typeof(obj) != "computer" then return ""
+    rhost = obj
+    if typeof(obj) == "shell" then rhost = obj.host_computer
+    f = rhost.File("/etc/passwd")
+    if not f then return ""
+    if f.has_permission("w") then return "root" else return "guest"
+end function
+
+
+///-- IPEnmum /out metaxploit.so ------------------------------------
+
+// metaxploit-free port scan — uses get_router().used_ports instead of
+// net_use, so it works when metaxploit.so isn't loaded. PUBLIC ips only
+// (get_router needs a routable address); recon only, no exploit session.
+// portFilter: list of port strings to limit to, or [] for all open.
+PortsRouter = function(targets, portFilter)
+    openIps = []
+    lastOpen = ""
+    for tgt in targets
+        if tgt == "" then continue
+        r = get_router(tgt)
+        if not r then
+            print(c.grey + "  [-] " + tgt + " — no router (LAN ip or unreachable)" + c.ennd)
+            continue
+        end if
+        ups = r.used_ports
+        if not ups or ups.len == 0 then
+            print(c.grey + "  [-] " + tgt + " — no open ports" + c.ennd)
+            continue
+        end if
+        found = []
+        for p in ups
+            pn = "" + p.port_number
+            if portFilter.len > 0 and portFilter.indexOf(pn) == null then continue
+            if p.is_closed then continue
+            print(c.lime + "  [+] " + tgt + "  " + pn + " open  (lan " + p.get_lan_ip + ")" + c.ennd)
+            found.push(pn)
+            lastOpen = pn
+        end for
+        if found.len > 0 then openIps.push(tgt)
+    end for
+    if openIps.len > 0 then
+        globals.pipeResult = openIps.join(",")
+        globals.pipeVars["port"] = lastOpen
+        print(c.cyan + "ports: " + openIps.len + "/" + targets.len + " ip(s) with an open port — " + openIps.join(", ") + c.ennd)
+    else
+        globals.pipeFailed = true
+        print(c.yellow + "<b>ports: no open ports found" + c.ennd)
+    end if
+end function
+
+
+
+// -- IpEnum --------------------------------------------------------
+// Enumerates LAN from remote shell, filters by open port,
+// clips matching IPs to @var.
+// Usage: ipenum [port] @var
+IpEnum = function(port, storeVar)
+    portInt = port.to_int
+    if typeof(portInt) != "number" then
+        print(c.yellow + "<b>ipenum: invalid port" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    // if pipeResult has IPs (from randip N), scan those directly
+    if globals.pipeResult != "" and globals.pipeResult != null then
+        if portInt == 0 then
+            print(c.yellow + "<b>ipenum: port 0 (router) exists on almost all IPs - try a specific port like 22, 80, 21" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        ipList = globals.pipeResult.split(",")
+        globals.pipeResult = ""
+        print(c.orange + "Checking " + ipList.len + " IP(s) for port " + port + "..." + c.ennd)
+        results = []
+        for ip in ipList
+            ns = metaxploit.net_use(ip, portInt)
+            if ns then
+                results.push(ip)
+                print(c.lime + "  [+] " + ip + ":" + port + " open" + c.ennd)
+            end if
+        end for
+        if results.len == 0 then
+            print(c.yellow + "<b>ipenum: no IPs found with port " + port + " open" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        joined = results.join(",")
+        globals.pipeResult = joined
+        print(c.cyan + "  " + results.len + " / " + ipList.len + " IP(s) have port " + port + c.ennd)
+        if storeVar != null and storeVar != "" then
+            gco2 = get_custom_object
+            if not gco2.hasIndex("clips") then gco2.clips = {}
+            gco2.clips[storeVar] = joined
+            globals.pipeVars[storeVar] = joined
+            print(c.lime + "  clipped to @" + storeVar + c.ennd)
+        end if
+        return
+    end if
+
+    // no pipeResult - fall through to LAN enum from remote shell
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>ipenum: need remote shell (or pipe IPs from randip N)" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    rcomp = object.host_computer
+    print(c.orange + "Scanning LAN for port " + port + "..." + c.ennd)
+
+    q = char(34)
+    n = char(10)
+    rcomp.touch("/home/guest", "ipenum.src")
+    sf = rcomp.File("/home/guest/ipenum.src")
+    if not sf then
+        print(c.yellow + "<b>ipenum: could not write script" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    // discover LAN IPs then filter by port
+    src = "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+    src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then exit(" + q + "no meta" + q + ")" + n
+    src = src + "gco = get_custom_object" + n
+    src = src + "deviceList = []" + n
+    src = src + "getDevices = function(router)" + n
+    src = src + "  if router == null then return" + n
+    src = src + "  ip = router.local_ip" + n
+    src = src + "  if deviceList.indexOf(ip) == null then deviceList.push(ip)" + n
+    src = src + "  devices = router.devices_lan_ip" + n
+    src = src + "  if not devices then return" + n
+    src = src + "  for device in devices" + n
+    src = src + "    if device == ip then continue" + n
+    src = src + "    if deviceList.indexOf(device) != null then continue" + n
+    src = src + "    subRouter = get_router(device)" + n
+    src = src + "    subSwitch = get_switch(device)" + n
+    src = src + "    if subRouter then" + n
+    src = src + "      deviceList.push(device)" + n
+    src = src + "      getDevices(subRouter)" + n
+    src = src + "    else if subSwitch then" + n
+    src = src + "      deviceList.push(device)" + n
+    src = src + "      getDevices(subSwitch)" + n
+    src = src + "    else" + n
+    src = src + "      deviceList.push(device)" + n
+    src = src + "    end if" + n
+    src = src + "  end for" + n
+    src = src + "end function" + n
+    src = src + "router = get_router" + n
+    src = src + "if not router then exit()" + n
+    src = src + "getDevices(router)" + n
+    src = src + "results = []" + n
+    src = src + "for ip in deviceList" + n
+    src = src + "  ns = metaxploit.net_use(ip, " + portInt + ")" + n
+    src = src + "  if ns then results.push(ip)" + n
+    src = src + "end for" + n
+    src = src + "gco.ipenumResults = results.join(" + q + "," + q + ")" + n
+    src = src + "gco.ipenumCount = results.len" + n
+
+    sf.set_content(src)
+    me = get_shell
+    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+    object.build("/home/guest/ipenum.src", "/home/guest", false)
+    bf = rcomp.File("/home/guest/ipenum")
+    if not bf then
+        print(c.yellow + "<b>ipenum: build failed" + c.ennd)
+        sf.delete
+        mxf = rcomp.File("/home/guest/metaxploit.so")
+        if mxf then mxf.delete
+        globals.pipeFailed = true
+        return
+    end if
+
+    gco = get_custom_object
+    gco.ipenumResults = null
+    gco.ipenumCount = 0
+    object.launch("/home/guest/ipenum")
+    sf.delete
+    bf.delete
+    mxf = rcomp.File("/home/guest/metaxploit.so")
+    if mxf then mxf.delete
+
+    if not gco.ipenumResults or gco.ipenumCount == 0 then
+        print(c.yellow + "<b>ipenum: no IPs found with port " + port + " open" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    results = gco.ipenumResults.split(",")
+    print(c.cyan + "  " + results.len + " IP(s) with port " + port + " open:" + c.ennd)
+    for ip in results
+        print(c.white + "  " + ip + c.ennd)
+    end for
+
+    globals.pipeResult = gco.ipenumResults
+    if storeVar != null and storeVar != "" then
+        gco2 = get_custom_object
+        if not gco2.hasIndex("clips") then gco2.clips = {}
+        gco2.clips[storeVar] = gco.ipenumResults
+        globals.pipeVars[storeVar] = gco.ipenumResults
+        print(c.lime + "  clipped " + results.len + " IP(s) to @" + storeVar + c.ennd)
+    end if
+end function
+
+// -- LanEnum -------------------------------------------------------
+// Enumerates LAN from remote shell perspective, prints IPs,
+// optionally clips the list to a named @var.
+LanEnum = function(storeVar, localMode=false)
+    if localMode then
+        // no upload/build/launch needed — if you jumped phantom itself
+        // onto this machine, it's already running here, so the same
+        // discovery walk can just run in-process against myComp's own
+        // router instead of writing/building a script on a held object
+        print(c.orange + "Enumerating LAN locally..." + c.ennd)
+        deviceList = []
+        getDevicesLE = function(r)
+            if r == null then return
+            ip = r.local_ip
+            if deviceList.indexOf(ip) == null then deviceList.push(ip)
+            devices = r.devices_lan_ip
+            if not devices then return
+            for device in devices
+                if device == ip then continue
+                if deviceList.indexOf(device) != null then continue
+                subRouter = get_router(device)
+                subSwitch = get_switch(device)
+                if subRouter then
+                    deviceList.push(device)
+                    getDevicesLE(subRouter)
+                else if subSwitch then
+                    deviceList.push(device)
+                    getDevicesLE(subSwitch)
+                else
+                    deviceList.push(device)
+                end if
+            end for
+        end function
+
+        router = get_router(myComp.public_ip)
+        if not router then router = get_router(myComp.local_ip)
+        if not router then
+            print(c.yellow + "<b>lanenum: could not get local router" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        getDevicesLE(router)
+
+        // fill IP gaps — same as remote mode
+        gapList = []
+        for existingIp in deviceList
+            parts = existingIp.split("\\.")
+            if parts.len < 4 then continue
+            subnet = parts[0] + "." + parts[1] + "." + parts[2] + "."
+            lastOctet = parts[3].to_int
+            i = 1
+            while i < lastOctet
+                candidate = subnet + i
+                if deviceList.indexOf(candidate) == null and gapList.indexOf(candidate) == null then
+                    gapList.push(candidate)
+                end if
+                i = i + 1
+            end while
+        end for
+        for gapIp in gapList
+            deviceList.push(gapIp)
+        end for
+
+        if deviceList.len == 0 then
+            print(c.yellow + "<b>lanenum: no devices found" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+
+        print(c.cyan + "  " + deviceList.len + " device(s) found:" + c.ennd)
+        for ip in deviceList
+            print(c.white + "  " + ip + c.ennd)
+        end for
+
+        joined = deviceList.join(",")
+        globals.pipeResult = joined
+        if storeVar != null and storeVar != "" then
+            gco2 = get_custom_object
+            if not gco2.hasIndex("clips") then gco2.clips = {}
+            gco2.clips[storeVar] = joined
+            pipeVars[storeVar] = joined
+            globals.pipeVars[storeVar] = joined
+            print(c.lime + "  clipped " + deviceList.len + " ip(s) to @" + storeVar + c.ennd)
+        end if
+        return
+    end if
+
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>lanenum: need remote shell" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    rcomp = object.host_computer
+    print(c.rust + "Enumerating LAN from target..." + c.ennd)
+
+    q = char(34)
+    n = char(10)
+    rcomp.touch("/home/guest", "lenum.src")
+    sf = rcomp.File("/home/guest/lenum.src")
+    if not sf then
+        print(c.yellow + "<b>lanenum: could not write script" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    src = "gco = get_custom_object" + n
+    src = src + "deviceList = []" + n
+    src = src + "getDevices = function(router)" + n
+    src = src + "  if router == null then return" + n
+    src = src + "  ip = router.local_ip" + n
+    src = src + "  if deviceList.indexOf(ip) == null then deviceList.push(ip)" + n
+    src = src + "  devices = router.devices_lan_ip" + n
+    src = src + "  if not devices then return" + n
+    src = src + "  for device in devices" + n
+    src = src + "    if device == ip then continue" + n
+    src = src + "    if deviceList.indexOf(device) != null then continue" + n
+    src = src + "    subRouter = get_router(device)" + n
+    src = src + "    subSwitch = get_switch(device)" + n
+    src = src + "    if subRouter then" + n
+    src = src + "      deviceList.push(device)" + n
+    src = src + "      getDevices(subRouter)" + n
+    src = src + "    else if subSwitch then" + n
+    src = src + "      deviceList.push(device)" + n
+    src = src + "      getDevices(subSwitch)" + n
+    src = src + "    else" + n
+    src = src + "      deviceList.push(device)" + n
+    src = src + "    end if" + n
+    src = src + "  end for" + n
+    src = src + "end function" + n
+    src = src + "router = get_router" + n
+    src = src + "if not router then exit()" + n
+    src = src + "getDevices(router)" + n
+    src = src + "gapList = []" + n
+    src = src + "for existingIp in deviceList" + n
+    src = src + "  parts = existingIp.split(" + q + "\\." + q + ")" + n
+    src = src + "  if parts.len < 4 then continue" + n
+    src = src + "  subnet = parts[0] + " + q + "." + q + " + parts[1] + " + q + "." + q + " + parts[2] + " + q + "." + q + n
+    src = src + "  lastOctet = parts[3].to_int" + n
+    src = src + "  i = 1" + n
+    src = src + "  while i < lastOctet" + n
+    src = src + "    candidate = subnet + i" + n
+    src = src + "    if deviceList.indexOf(candidate) == null and gapList.indexOf(candidate) == null then" + n
+    src = src + "      gapList.push(candidate)" + n
+    src = src + "    end if" + n
+    src = src + "    i = i + 1" + n
+    src = src + "  end while" + n
+    src = src + "end for" + n
+    src = src + "for gapIp in gapList" + n
+    src = src + "  deviceList.push(gapIp)" + n
+    src = src + "end for" + n
+    src = src + "gco.lenumIps = deviceList.join(" + q + "," + q + ")" + n
+    sf.set_content(src)
+
+    object.build("/home/guest/lenum.src", "/home/guest", false)
+    bf = rcomp.File("/home/guest/lenum")
+    if not bf then
+        print(c.yellow + "<b>lanenum: build failed" + c.ennd)
+        sf.delete
+        globals.pipeFailed = true
+        return
+    end if
+
+    gco = get_custom_object
+    gco.lenumIps = null
+    object.launch("/home/guest/lenum")
+    sf.delete
+    bf.delete
+
+    if not gco.lenumIps or gco.lenumIps == "" then
+        print(c.yellow + "<b>lanenum: no devices found" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    deviceList = gco.lenumIps.split(",")
+    print(c.cyan + "  " + deviceList.len + " device(s) found:" + c.ennd)
+    for ip in deviceList
+        print(c.white + "  " + ip + c.ennd)
+    end for
+
+    globals.pipeResult = gco.lenumIps
+    if storeVar != null and storeVar != "" then
+        gco2 = get_custom_object
+        if not gco2.hasIndex("clips") then gco2.clips = {}
+        gco2.clips[storeVar] = gco.lenumIps
+        pipeVars[storeVar] = gco.lenumIps
+        globals.pipeVars[storeVar] = gco.lenumIps
+        print(c.lime + "  clipped " + deviceList.len + " ip(s) to @" + storeVar + c.ennd)
+    end if
+end function
+
+// -- Cascade -------------------------------------------------------
+// Runs wstack from every shell on the stack, sweeping the LAN behind
+// each one and capturing all discovered boxes in one pass.
+// cascade [opt:libname] — sweeps every shell on the stack via WStack.
+// No libname: WStack falls to wsx.src's hardcoded init.so/libhttp.so
+// guess for every router regardless of what's actually running there.
+// With a libname, wsx.src instead checks db.txt-known mem/val pairs for
+// THAT lib+version first (KnownPairsFor, same shortcut scanlan/scanlib/
+// grab already get) before falling back to a full scan — so a lib
+// you've already exploited elsewhere skips straight to known-good
+// candidates on every hop of the sweep instead of guessing blind.
+Cascade = function(libArg="")
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>cascade: stack is empty" + c.ennd)
+        return
+    end if
+
+    shells = []
+    for obj in objectStack
+        if typeof(obj) == "shell" then shells.push(obj)
+    end for
+
+    if shells.len == 0 then
+        print(c.yellow + "<b>cascade: no shell objects on stack" + c.ennd)
+        print(c.grey + "  grab routers and push them first: grab pt 0 | push" + c.ennd)
+        return
+    end if
+
+    if libArg != "" then
+        print(c.cyan + "<b>cascade: sweeping " + shells.len + " router(s) with lib " + libArg + "..." + c.ennd)
+    else
+        print(c.cyan + "<b>cascade: sweeping " + shells.len + " router(s)..." + c.ennd)
+    end if
+    div
+
+    savedObject  = globals.object
+    savedPath    = globals.remotePath
+    startCount   = objectStack.len
+
+    i = 1
+    for sh in shells
+        rcomp = sh.host_computer
+        print(c.orange + "<b>[" + i + "/" + shells.len + "] " + rcomp.public_ip + "  lan:" + rcomp.local_ip + c.ennd)
+        globals.object     = sh
+        globals.remotePath = "/"
+        if libArg != "" then
+            WStack([libArg], false)
+        else
+            WStack([], false)
+        end if
+        div
+        i = i + 1
+    end for
+
+    globals.object     = savedObject
+    globals.remotePath = savedPath
+
+    newBoxes = objectStack.len - startCount
+    print(c.cyan + "<b>cascade complete" + c.ennd)
+    print(c.grey + "  routers swept:    " + shells.len + c.ennd)
+    print(c.grey + "  new boxes found:  " + newBoxes + c.ennd)
+    print(c.grey + "  total on stack:   " + objectStack.len + c.ennd)
+end function
+
+// -- Random IP ----------------------------------------------------
+RandIp = function(n)
+    if n == null or typeof(n) != "number" or n < 1 then n = 1
+    ips = []
+    i = 0
+    while i < n
+        a = floor(rnd * 256)
+        b = floor(rnd * 256)
+        d = floor(rnd * 256)
+        e = floor(rnd * 256)
+        ips.push(a + "." + b + "." + d + "." + e)
+        i = i + 1
+    end while
+    for ip in ips
+        print(ip)
+    end for
+    joined = ips.join(",")
+    globals.pipeResult = joined
+    globals.pipeVars["p"] = joined
+    gcoR = get_custom_object
+    if not gcoR.hasIndex("clips") then gcoR.clips = {}
+    gcoR.clips["p"] = joined
+end function
+
+// -- Nmap ---------------------------------------------------------
+Nmap = function(ip, comp, silent, autoYes)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if not is_valid_ip(ip) then
+        print(c.yellow + "<b>nmap: invalid ip" + c.ennd)
+        return
+    end if
+    localComp = get_shell.host_computer
+    if not localComp.is_network_active then
+        print(c.yellow + "<b>nmap: no network" + c.ennd)
+        return
+    end if
+    lan = is_lan_ip(ip)
+    if lan then
+        router = get_router
+    else
+        router = get_router(ip)
+    end if
+    if not router then
+        print(c.yellow + "<b>nmap: host not found" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    if lan then
+        ports = router.device_ports(ip)
+    else
+        ports = router.used_ports
+    end if
+    if not ports then
+        print(c.yellow + "<b>nmap: no ports returned" + c.ennd)
+        return
+    end if
+    print(char(10) + c.cyan + "nmap scan: " + ip + "  [" + current_date + "]" + c.ennd)
+    print(whois(ip))
+    print(c.grey + "kernel_router: " + router.kernel_version + c.ennd + char(10))
+    if typeof(ports) == "string" then
+        print(ports)
+        return
+    end if
+    info = "PORT STATE SERVICE VERSION LAN"
+    for p in ports
+        svc   = router.port_info(p)
+        lans  = p.get_lan_ip
+        state = "open"
+        if p.is_closed and not lan then state = "closed"
+        info = info + char(10) + p.port_number + " " + state + " " + svc + " " + lans
+    end for
+    print(format_columns(info) + char(10))
+    choice = ""
+    while choice != "y" and choice != "n"
+        if silent then
+            if autoYes then choice = "y" else choice = "n"
+        else
+            choice = user_input(c.cyan + "Set " + ip + " as target? (y/n): " + c.ennd)
+        end if
+    end while
+    if choice == "y" then SetTarget(ip, null)
+end function
+
+// -- Scan ---------------------------------------------------------
+// ── EnsureLanPath ─────────────────────────────────────────────────
+// scan/grab's LAN branch only ever bounces one hop (via ScanLanBounce/
+// GrabLanBounce below, from object.host_computer). That's only enough
+// when targetIp is directly on that machine's own LAN. netmap/lanenum
+// can see much deeper because they use metadata-only lookups — for a
+// target N hops away, this walks that same path (FindRouterPath, in
+// remote.src) and pivots through each intermediate router for real
+// (net_use + overflow, one hop at a time, reusing GrabLanBounce) until
+// object is actually standing on the router that fronts targetIp.
+// Returns true once in position (including "already were"), false if
+// the path couldn't be resolved or a hop couldn't be taken.
+EnsureLanPath = function(targetIp)
+    if typeof(object) != "shell" then return false
+    rcomp = object.host_computer
+
+    // targeting the machine you're already standing on isn't a pivot —
+    // net_use-ing yourself can apparently still "succeed" if the port
+    // happens to be open locally, silently handing back your own
+    // machine's own lib instead of a remote target. devices_lan_ip
+    // also lists the router's own address as one of its own devices,
+    // which is why FindRouterPath's shortcut below would otherwise
+    // treat this as "already reachable" instead of catching it.
+    if targetIp == rcomp.local_ip or targetIp == rcomp.public_ip then
+        print(c.yellow + "<b>pivot: " + targetIp + " is the machine you're already on, not a remote target" + c.ennd)
+        return false
+    end if
+
+    path = FindRouterPath(rcomp, targetIp)
+    if path == null then
+        print(c.yellow + "<b>pivot: " + targetIp + " not found in the visible network — try netmap/lanenum first" + c.ennd)
+        return false
+    end if
+    if path.len == 0 then
+        // private ranges can repeat across unrelated nested segments,
+        // so this "already there" match is a plain string compare and
+        // can be a false positive — surface what it actually matched
+        // against so a wrong pivot skip is visible instead of silent
+        print(c.grey + "  pivot: " + targetIp + " already listed on " + rcomp.public_ip + "'s LAN (root=" + rcomp.local_ip + ") — no hop needed" + c.ennd)
+        return true
+    end if
+
+    print(c.orange + "<b>=== AUTO-PIVOT: " + path.len + " hop(s) to reach " + targetIp + " ===" + c.ennd)
+    print(c.grey + "  path: " + path.join(" -> ") + c.ennd)
+
+    for hopIp in path
+        rcomp = object.host_computer
+        if rcomp.local_ip == hopIp or rcomp.public_ip == hopIp then continue
+
+        curRouter = get_router(rcomp.public_ip)
+        if not curRouter then curRouter = get_router(rcomp.local_ip)
+        ports = null
+        if curRouter then ports = curRouter.device_ports(hopIp)
+        if not ports then
+            hopRouter = get_router(hopIp)
+            if hopRouter then ports = hopRouter.used_ports
+        end if
+        if not ports then
+            print(c.yellow + "<b>pivot: no ports found on " + hopIp + c.ennd)
+            return false
+        end if
+
+        print(c.grey + "  hop -> " + hopIp + " ..." + c.ennd)
+        got = false
+        for p in ports
+            if p.is_closed then continue
+            // intermediate hops must land a shell (not just a computer)
+            // so the next hop can keep launching scripts through it
+            GrabLanBounce(hopIp, p.port_number, false)
+            if typeof(object) == "shell" then
+                nowComp = object.host_computer
+                if nowComp.local_ip == hopIp then
+                    got = true
+                    break
+                end if
+            end if
+            globals.pipeFailed = false
+        end for
+
+        if not got then
+            print(c.yellow + "<b>pivot: could not get a shell on " + hopIp + c.ennd)
+            return false
+        end if
+        print(c.green + "  [+] pivoted onto " + hopIp + c.ennd)
+    end for
+
+    return true
+end function
+
+// ── ScanLanBounce ─────────────────────────────────────────────────
+// Writes a mini scanner to the held shell, launches it in context,
+// reads vuln results back via gco. Lets metaxploit.net_use run from
+// inside the target network so cross-subnet LAN IPs are reachable.
+ScanLanBounce = function(lanIp, port, libName, useLocal=false)
+    slbBin = currentPath + "/slb"
+    if not myComp.File(slbBin) then
+        print(c.yellow + "<b>scan: slb binary not found at " + slbBin + c.ennd)
+        print(c.grey + "  build it first: build /root/ai/tp/slb.src /root/ai/tp" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    if useLocal then
+        // no upload/scp needed at all — if you jumped phantom itself
+        // onto this machine, slb and metaxploit.so already sit right
+        // alongside it at currentPath, so it can just launch in place
+        rcomp = myComp
+        print(c.orange + "Bouncing scan to " + lanIp + ":" + port + " locally..." + c.ennd)
+        launchPath = slbBin
+    else
+        rcomp = object.host_computer
+        print(c.orange + "Bouncing scan to " + lanIp + ":" + port + " via " + rcomp.public_ip + "..." + c.ennd)
+
+        // upload metaxploit + slb once per host, then leave them in place —
+        // EnsureLanPath calls this once per candidate port per hop while
+        // pivoting, and re-scp'ing (then deleting) the *same* unchanged
+        // binary on every single attempt was the dominant cost. Cleanup
+        // trade-off: these now persist in /home/guest for the rest of the
+        // session instead of being wiped after each run.
+        mxf = rcomp.File("/lib/metaxploit.so")
+        if not mxf then
+            myShell.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+            mxf = rcomp.File("/home/guest/metaxploit.so")
+        end if
+
+        bf = rcomp.File("/home/guest/slb")
+        if not bf then
+            print(c.grey + "  uploading scanner..." + c.ennd)
+            uploadResult = myShell.scp(slbBin, "/home/guest", object)
+            if typeof(uploadResult) == "string" and uploadResult != "" then
+                print(c.yellow + "<b>scan: upload failed: " + uploadResult + c.ennd)
+                globals.pipeFailed = true
+                return
+            end if
+            bf = rcomp.File("/home/guest/slb")
+        end if
+        if not bf then
+            print(c.yellow + "<b>scan: slb not found on target after upload" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        launchPath = "/home/guest/slb"
+    end if
+
+    gco.slbIp      = lanIp
+    gco.slbPort    = port
+    gco.slbLib     = ""
+    if libName then gco.slbLib = libName
+    gco.slbResults = null
+    gco.slbCount   = 0
+    gco.slbPatched = 0
+    gco.slbLibName = ""
+    gco.slbLibVer  = ""
+    gco.slbDebug   = "script did not run"
+    gco.slbDone    = false
+    // plain data, not a live object — safe to hand across the launch
+    // boundary (unlike the metaxploitLib handle-sharing that failed).
+    // Lets slb.src skip mx.scan()/scan_address() entirely for a lib
+    // we already know has nothing exploitable (deadLibs) or already
+    // has a confirmed working mem/val for (edb) — same db.txt shortcut
+    // ScanLan/grab get on the direct-ip path, extended to LAN targets.
+    gco.deadLibs   = globals.deadLibs
+    gco.edb        = globals.edb
+    gco.slbDeadLib = false
+    if useLocal then myShell.launch(launchPath) else object.launch(launchPath)
+    // poll instead of a fixed wait — stop the moment slb actually
+    // finishes (success or failure) instead of always burning the
+    // full timeout; EnsureLanPath calls this once per candidate port
+    // per hop, so this compounds a lot on multi-hop targets
+    waited = 0
+    while not gco.slbDone and waited < 6
+        wait(0.25)
+        waited = waited + 0.25
+    end while
+
+    // deliberately not deleting slb/metaxploit.so here anymore — see
+    // the upload comment above. They're left behind in /home/guest on
+    // every host pivoted through; no cleanup command exists yet to
+    // sweep them, so treat this target as still "dirty" afterward.
+
+    // slb.src can't write deadlibs.txt itself (it runs on the target,
+    // not the origin machine) — it just flags the finding via gco and
+    // we persist it here, back on the origin, where currentPath is
+    // actually valid.
+    if gco.slbDeadLib then DeadLibAdd(gco.slbLibName, gco.slbLibVer)
+
+    // always print debug so we can see what happened
+    print(c.teal + "  debug: " + gco.slbDebug + c.ennd)
+
+    if gco.slbPatched == 1 then
+        print(c.grey + "  " + gco.slbLibName + " " + gco.slbLibVer + " — patched" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    if not gco.slbResults or gco.slbCount == 0 then
+        debugMsg = ""
+        if gco.hasIndex("slbDebug") and gco.slbDebug != "" then debugMsg = "  (" + gco.slbDebug + ")"
+        print(c.yellow + "<b>scan: no vulns on " + lanIp + ":" + port + debugMsg + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    print(c.cyan + "  lib: " + gco.slbLibName + " " + gco.slbLibVer + "  [" + gco.slbCount + " vuln(s)]" + c.ennd)
+    slbUserCtx = ""
+    if gco.hasIndex("slbUserCtx") then slbUserCtx = gco.slbUserCtx
+    for entry in gco.slbResults.split(char(2))
+        parts2 = entry.split(char(3))
+        if parts2.len < 2 then continue
+        mem2 = parts2[0]
+        val2 = parts2[1]
+        outcome2 = ""
+        if parts2.len >= 3 then outcome2 = parts2[2]
+        line2 = "    " + mem2 + "  " + val2
+        if outcome2 != "" then line2 = line2 + "  -> " + outcome2
+        print(c.gold + line2 + c.ennd)
+        // record every attempted candidate's actual outcome, not just
+        // the one we ended up keeping — same completeness the direct-ip
+        // Grab loop has for its own dbMatches. "skipped" means slb.src
+        // never actually tried it (already had a shell) — don't record
+        // a dud for something we didn't attempt.
+        if outcome2 != "" and outcome2 != "skipped" then
+            userForEntry = ""
+            if mem2 == gco.slbMem and val2 == gco.slbVal and outcome2 == gco.slbObjType then userForEntry = slbUserCtx
+            EdbAdd(gco.slbLibName, gco.slbLibVer, mem2, val2, outcome2, userForEntry)
+        end if
+    end for
+    // no summary print here — ScanLan (hack.src) already prints this
+    // exact "obtained via" line itself once it knows whether the object
+    // actually got pushed to the stack (respecting -c/acceptComputer),
+    // and GrabLanBounce has its own separate success message, so a
+    // print here was just a duplicate of one or the other depending on
+    // which caller invoked this
+    // store for grab to pick up
+    gco.slbReady = true
+end function
+
+// ── GrabLanBounce ─────────────────────────────────────────────────
+// slb already tries overflow() on every candidate during its scan
+// (see payloads/slb.src), so grab just needs a current scan's result
+// sitting in gco — no separate on-target grab payload/launch.
+GrabLanBounce = function(lanIp, port, acceptComputer)
+    // re-scan if no results cached for this exact ip:port — must check
+    // port too, otherwise a cached result from a different port on the
+    // same ip (e.g. while a caller is trying several ports in a row
+    // during auto-pivot) gets reused for the wrong target
+    if not gco.hasIndex("slbReady") or not gco.slbReady or gco.slbIp != lanIp or gco.slbPort != port then
+        ScanLanBounce(lanIp, port)
+        if globals.pipeFailed then return
+    end if
+
+    if not gco.slbObj then
+        print(c.yellow + "<b>grab: no working exploit for " + lanIp + ":" + port + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    objType = gco.slbObjType
+    if objType == "shell" or (objType == "computer" and acceptComputer) then
+        globals.object = gco.slbObj
+        globals.remotePath = "/"
+        globals.pipeResult = lanIp
+        globals.pipeVars["p"] = lanIp
+        // gco.slbUserCtx may be missing if the deployed slb binary
+        // predates this field (stale build) — read defensively so an
+        // out-of-date target doesn't crash the caller
+        slbUserCtx = ""
+        if gco.hasIndex("slbUserCtx") then slbUserCtx = gco.slbUserCtx
+        EdbAdd(gco.slbLibName, gco.slbLibVer, gco.slbMem, gco.slbVal, objType, slbUserCtx)
+        gco.slbReady = false
+        if objType == "shell" then
+            if IsRoot(globals.object) then
+                print(c.lime + "<b>root shell obtained via LAN bounce" + c.ennd)
+            else
+                print(c.cyan + "<b>shell obtained via LAN bounce" + c.ennd)
+            end if
+        else
+            print(c.cyan + "<b>computer obtained via LAN bounce" + c.ennd)
+        end if
+        GETPERMS(globals.object)
+    else if objType == "computer" and not acceptComputer then
+        print(c.yellow + "<b>grab: got computer — use grab -c to accept computers" + c.ennd)
+        globals.pipeFailed = true
+        gco.slbReady = false
+    end if
+end function
+
+Scan = function(ip, port, comp, inject, libName)
+    if typeof(globals.metaxploit) != "library" then
+        globals.metaxploit = include_lib(globals.currentPath + "/metaxploit.so")
+        if not globals.metaxploit then globals.metaxploit = include_lib("/lib/metaxploit.so")
+        if not globals.metaxploit then
+            print(c.yellow + "<b>scan: metaxploit.so not available" + c.ennd)
+            return
+        end if
+    end if
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if ip == "-l" then
+        metalib = metaxploit.load(port)
+        if not metalib then
+            print(c.yellow + "<b>scan: lib not found: " + port + c.ennd)
+            return
+        end if
+    else
+        if not is_valid_ip(ip) then
+            print(c.yellow + "<b>scan: invalid ip" + c.ennd)
+            return
+        end if
+        portInt = port.to_int
+        if typeof(portInt) != "number" then
+            print(c.yellow + "<b>scan: invalid port" + c.ennd)
+            return
+        end if
+
+        // ── LAN IP: bounce through held shell via nested launch ───
+        if is_lan_ip(ip) then
+
+            if not EnsureLanPath(ip) then
+                globals.pipeFailed = true
+                return
+            end if
+            ScanLanBounce(ip, portInt, libName)
+            return
+        else
+            ns = metaxploit.net_use(ip, portInt)
+        end if
+        if not ns then
+            print(c.yellow + "<b>scan: no net session on " + ip + ":" + port + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        metalib = ns.dump_lib
+        // if specific lib requested, try to find it
+        if libName then
+            metalib = null
+            // first try loading locally if it's a full path or in /lib
+            localPath = libName
+            if libName.indexOf("/") == null then localPath = "/lib/" + libName
+            ml = metaxploit.load(localPath)
+            if ml then
+                metalib = ml
+                print(c.grey + "  using local: " + ml.lib_name + " " + ml.version + c.ennd)
+            end if
+            // fallback - scan all ports for the lib
+            if not metalib then
+                router = get_router(ip)
+                if router then
+                    ports = router.used_ports
+                    if ports then
+                        for p in ports
+                            pns = metaxploit.net_use(ip, p.port_number)
+                            if not pns then continue
+                            pl = pns.dump_lib
+                            if not pl then continue
+                            lname = libName.replace(".so","")
+                            if pl.lib_name == libName or pl.lib_name == lname then
+                                metalib = pl
+                                print(c.grey + "  using remote: " + pl.lib_name + " " + pl.version + " on port " + p.port_number + c.ennd)
+                                break
+                            end if
+                        end for
+                    end if
+                end if
+            end if
+            if not metalib then
+                print(c.yellow + "<b>scan: lib not found: " + libName + c.ennd)
+                return
+            end if
+        end if
+        if not metalib then
+            print(c.yellow + "<b>scan: metalib not obtained" + c.ennd)
+            return
+        end if
+    end if
+    // known dead (patched / zero exploitable vulnerabilities from a prior
+    // scan) — same check ScanLan already does, just never wired up here
+    if IsDeadLib(metalib.lib_name, metalib.version) then
+        print(c.grey + "  [known dead — no exploitable vulnerabilities, see deadlibs.txt]" + c.ennd)
+        return
+    end if
+    // check db.txt for known exploits for this lib - skip scanning if found
+    dbFile = myComp.File(currentPath + "/db.txt")
+	if not dbFile then
+		myComp.touch(currentPath, "db.txt")
+		dbFile = myComp.File(currentPath+ "/db.txt")
+		else
+		if dbFile == null or not dbFile then
+		print(char(9) + char(10) + "<color=red><size=125%>Missing db.txt, make it in /root/ai/tp and then try again")
+		print(char(10))
+		return
+	end if
+	end if
+
+    matches = []
+    if dbFile and typeof(dbFile) == "file" then
+        content = dbFile.get_content
+
+        if content and content != "" then
+            for line in content.split(char(10))
+                if line == "" then continue
+                line = line.replace(char(13), "")
+                p1 = line.indexOf("|")
+                if p1 == null then continue
+                p2 = line.indexOf("|", p1 + 1)
+                if p2 == null then continue
+                p3 = line.indexOf("|", p2 + 1)
+                if p3 != null then
+                    libName = line[:p1]
+                    libVer  = line[p1+1:p2]
+                    memAddr = line[p2+1:p3]
+                    // bound valStr at the 4th pipe (type field) — without
+                    // this, val picks up the trailing |type|user fields
+                    // too, corrupting the value overflow() gets called with
+                    p4 = line.indexOf("|", p3 + 1)
+                    if p4 != null then valStr = line[p3+1:p4] else valStr = line[p3+1:]
+                else
+                    libName = line[:p1]
+                    libVer  = ""
+                    memAddr = line[p1+1:p2]
+                    valStr  = line[p2+1:]
+                end if
+                // only match if lib name AND version match
+                if libName == metalib.lib_name and libVer == metalib.version and memAddr.len > 5 and valStr.len > 2 then
+                    matches.push({"mem": memAddr, "val": valStr})
+                end if
+            end for
+        end if
+        if matches.len > 0 then
+            print(c.green + "  edb hit: " + matches.len + " known exploit(s) for " + metalib.lib_name + " " + metalib.version + " - trying stored exploits" + c.ennd)
+            shells = 0
+            files  = 0
+            comps  = 0
+            gotResult = false
+            for e in matches
+                mem = e["mem"]
+                val = e["val"]
+                if inject then
+                    obj = metalib.overflow(mem, val, inject)
+                else
+                    obj = metalib.overflow(mem, val)
+                end if
+                if typeof(obj) == "shell" then
+                    print(char(10) + c.orange + "<b>" + mem + "  " + val + c.ennd)
+                    if IsRoot(obj) then
+                        print("<b>shell   : " + c.lime + "ROOT shell" + c.ennd)
+                    else
+                        print("<b>shell   : " + c.yellow + obj + c.ennd)
+                    end if
+                    shells = shells + 1
+                    gotResult = true
+                    GETPERMS(obj)
+                end if
+                if typeof(obj) == "computer" then
+                    print(char(10) + c.orange + "<b>" + mem + "  " + val + c.ennd)
+                    print("<b>computer: " + c.yellow + obj + c.ennd)
+                    comps = comps + 1
+                    gotResult = true
+                    GETPERMS(obj)
+                end if
+                if typeof(obj) == "file" then
+                    print(char(10) + c.orange + "<b>" + mem + "  " + val + c.ennd)
+                    print("<b>file    : " + c.yellow + obj.name + c.ennd)
+                    files = files + 1
+                    gotResult = true
+                end if
+            end for
+            if gotResult then
+                print(char(10) + c.gold + "lib: " + metalib.lib_name + " " + metalib.version + c.ennd)
+                print(c.orange + "shells: " + shells + "  files: " + files + "  computers: " + comps + c.ennd)
+                return
+            end if
+            // known entries didn't pan out on THIS target — stop here
+            // instead of auto-escalating to a full scan. A genuinely
+            // dead lib+version still gets caught and written to
+            // deadlibs.txt normally, via the is_patched/no-memList
+            // checks below, on whichever scan reaches this lib+version
+            // before db.txt has any exploit info recorded for it yet.
+            print(c.yellow + "<b>scan: known exploits didn't work on this target" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+    end if
+
+    if metalib.is_patched then
+        print(c.grey + "  [patched - no vulnerabilities]" + c.ennd)
+        DeadLibAdd(metalib.lib_name, metalib.version)
+        return
+    end if
+    memList = metaxploit.scan(metalib)
+    if not memList then
+        print(c.yellow + "<b>scan: no vulnerabilities found" + c.ennd)
+        DeadLibAdd(metalib.lib_name, metalib.version)
+        return
+    end if
+    shells = 0
+    files  = 0
+    comps  = 0
+    for mem in memList
+        results = metaxploit.scan_address(metalib, mem).split("Unsafe check: ")
+        for res in results
+            if res == results[0] then continue
+            val = res[res.indexOf("<b>") + 3 : res.indexOf("</b>")]
+            print(char(10) + c.orange + "<b>" + mem + "  " + val + c.ennd)
+            if inject then
+                obj = metalib.overflow(mem, val, inject)
+            else
+                obj = metalib.overflow(mem, val)
+            end if
+            if typeof(obj) == "shell" then
+                if IsRoot(obj) then
+                    print("<b>shell   : " + c.lime + "ROOT shell" + c.ennd)
+                else
+                    print("<b>shell   : " + c.yellow + obj + c.ennd)
+                end if
+                shells = shells + 1
+                GETPERMS(obj)
+                EdbAdd(metalib.lib_name, metalib.version, mem, val, "shell", GetUserCtx(obj))
+            else if typeof(obj) == "computer" then
+                print("<b>computer: " + c.yellow + obj + c.ennd)
+                comps = comps + 1
+                GETPERMS(obj)
+                EdbAdd(metalib.lib_name, metalib.version, mem, val, "computer", GetUserCtx(obj))
+            else if typeof(obj) == "file" then
+                print("<b>file    : " + c.yellow + obj.name + c.ennd)
+                files = files + 1
+            else
+                // record the miss too — same completeness as grab/exploit
+                EdbAdd(metalib.lib_name, metalib.version, mem, val, typeof(obj), "")
+                if typeof(obj) == "firewall" then print("test: firewall disable returned")
+            end if
+        end for
+    end for
+    print(char(10) + c.gold + "lib: " + metalib.lib_name + " " + metalib.version + c.ennd)
+    print(c.orange + "shells: " + shells + "  files: " + files + "  computers: " + comps + c.ennd)
+
+    // suggest grab if matching version exploit in db
+    dbFile2 = myComp.File(currentPath + "/db.txt")
+    if dbFile2 and typeof(dbFile2) == "file" then
+        dbContent2 = dbFile2.get_content
+        if dbContent2 and dbContent2 != "" then
+            for line in dbContent2.split(char(10))
+                if line == "" then continue
+                line = line.replace(char(13), "")
+                p1 = line.indexOf("|")
+                if p1 == null then continue
+                p2 = line.indexOf("|", p1 + 1)
+                if p2 == null then continue
+                p3 = line.indexOf("|", p2 + 1)
+                if p3 == null then continue
+                if line[:p1] == metalib.lib_name and line[p1+1:p2] == metalib.version then
+                    p4 = line.indexOf("|", p3 + 1)
+                    tipVal = line[p3+1:]
+                    if p4 != null then tipVal = line[p3+1:p4]
+                    print(char(10) + c.green + "  edb tip: " + c.ennd + c.grey + "grab " + ip + " " + port + " " + line[p2+1:p3] + " " + tipVal + c.ennd)
+                    break
+                end if
+            end for
+        end if
+    end if
+end function
+
+// -- Grab ---------------------------------------------------------
+Grab = function(ip, port, mem, val, inject, acceptComputer)
+    if typeof(globals.metaxploit) != "library" then
+        globals.metaxploit = include_lib(globals.currentPath + "/metaxploit.so")
+        if not globals.metaxploit then globals.metaxploit = include_lib("/lib/metaxploit.so")
+        if not globals.metaxploit then
+            print(c.yellow + "<b>grab: metaxploit.so not available" + c.ennd)
+            return
+        end if
+    end if
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if not is_valid_ip(ip) then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>grab: invalid ip" + c.ennd)
+        return
+    end if
+    portInt = port.to_int
+    if typeof(portInt) != "number" then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>grab: invalid port" + c.ennd)
+        return
+    end if
+    if globals.object and typeof(globals.object) == "shell" and is_lan_ip(ip) then
+        // LAN IP — bounce through held shell via nested launch
+        if not EnsureLanPath(ip) then
+            globals.pipeFailed = true
+            return
+        end if
+        GrabLanBounce(ip, portInt, acceptComputer)
+        return
+    end if
+    ns = metaxploit.net_use(ip, portInt)
+    if not ns then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>grab: no net session" + c.ennd)
+        return
+    end if
+    metalib = ns.dump_lib
+    if not metalib then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>grab: metalib not obtained" + c.ennd)
+        return
+    end if
+
+    // if no mem/val provided, check gco scan cache + db.txt
+    if not mem or mem == "" then
+        dbMatches = []
+
+        // pre-decoded pairs from a prior `scanlan ip port` (see hack.src)
+        scanKey = ip + ":" + portInt
+        if gco.hasIndex("scanLanResults") and gco.scanLanResults.hasIndex(scanKey) then
+            cached = gco.scanLanResults[scanKey]
+            if cached.lib == metalib.lib_name and cached.ver == metalib.version then
+                for pair in cached.exploits
+                    dbMatches.push({"mem": pair[0], "val": pair[1]})
+                end for
+                print(c.grey + "  scanlan cache: " + cached.exploits.len + " candidate(s) for " + metalib.lib_name + " " + metalib.version + c.ennd)
+            end if
+            gco.scanLanResults.remove(scanKey)
+        end if
+        dbFile = myComp.File(currentPath + "/db.txt")
+        if dbFile and typeof(dbFile) == "file" then
+            dbContent = dbFile.get_content
+            if dbContent and dbContent != "" then
+                for line in dbContent.split(char(10))
+                    if line == "" then continue
+                    line = line.replace(char(13), "")
+                    p1 = line.indexOf("|")
+                    if p1 == null then continue
+                    p2 = line.indexOf("|", p1 + 1)
+                    if p2 == null then continue
+                    p3 = line.indexOf("|", p2 + 1)
+                    if p3 != null then
+                        if line[:p1] == metalib.lib_name and line[p1+1:p2] == metalib.version then
+                            p4 = line.indexOf("|", p3 + 1)
+                            entry = {}
+                            entry.mem = line[p2+1:p3]
+                            if p4 != null then entry.val = line[p3+1:p4] else entry.val = line[p3+1:]
+                            dbMatches.push(entry)
+                        end if
+                    else
+                        if line[:p1] == metalib.lib_name then
+                            entry = {}
+                            entry.mem = line[p1+1:p2]
+                            entry.val = line[p2+1:]
+                            dbMatches.push(entry)
+                        end if
+                    end if
+                end for
+            end if
+        end if
+
+        // try each db entry until one yields a usable object
+        if dbMatches.len > 0 then
+            print(c.grey + "  db: " + dbMatches.len + " stored exploit(s) for " + metalib.lib_name + " " + metalib.version + c.ennd)
+        else
+            print(c.grey + "  db: no stored exploits for " + metalib.lib_name + " " + metalib.version + c.ennd)
+        end if
+        for e in dbMatches
+            if inject then
+                res = metalib.overflow(e.mem, e.val, inject)
+            else
+                res = metalib.overflow(e.mem, e.val)
+            end if
+            if typeof(res) == "shell" then
+                // record every working candidate as we discover it, not
+                // just whichever one ends up "winning" below — otherwise
+                // extra shells/computers found along the way (e.g. a
+                // guest shell superseded by a later root one) are learned
+                // and then silently thrown away instead of saved
+                EdbAdd(metalib.lib_name, metalib.version, e.mem, e.val, "shell", GetUserCtx(res))
+                if IsRoot(res) then
+                    // root shell — take it immediately
+                    globals.object = res
+                    mem = e.mem
+                    val = e.val
+                    print(c.lime + "  [+] root shell found: " + e.mem + " " + e.val + c.ennd)
+                    break
+                else if mem == "" or mem == null then
+                    // first guest shell — save it but keep looking for root
+                    globals.object = res
+                    mem = e.mem
+                    val = e.val
+                end if
+            else if typeof(res) == "computer" then
+                EdbAdd(metalib.lib_name, metalib.version, e.mem, e.val, "computer", GetUserCtx(res))
+                if acceptComputer then
+                    if mem == "" or mem == null then
+                        globals.object = res
+                        mem = e.mem
+                        val = e.val
+                        print(c.cyan + "  [+] computer found: " + e.mem + " " + e.val + c.ennd)
+                    end if
+                else
+                    print(c.grey + "    " + e.mem + " " + e.val + " -> computer (use -c to accept)" + c.ennd)
+                end if
+            else
+                print(c.grey + "    " + e.mem + " " + e.val + " -> " + typeof(res) + c.ennd)
+                // record the miss too, not just hits — a future scan of
+                // this same lib+version can then see this pair is a
+                // known dud instead of re-trying it blind every time
+                EdbAdd(metalib.lib_name, metalib.version, e.mem, e.val, typeof(res), "")
+                // exploratory: haven't confirmed what typeof() returns for
+                // a firewall-disable side-effect exploit — this just flags
+                // it loudly if it ever shows up so we can see the actual type
+                if typeof(res) == "firewall" then print("test: firewall disable returned")
+            end if
+        end for
+
+        if mem and mem != "" then
+            print(c.green + "  db: using " + metalib.lib_name + "  " + mem + "  " + val + c.ennd)
+            globals.remotePath = "/"
+            if typeof(globals.object) == "shell" then
+                globals.pipeResult = ip
+                globals.pipeVars["p"] = ip
+                if IsRoot(globals.object) then
+                    print(c.lime + "<b>root shell obtained" + c.ennd)
+                else
+                    print(c.cyan + "<b>shell obtained" + c.ennd)
+                end if
+                GETPERMS(globals.object)
+                EdbAdd(metalib.lib_name, metalib.version, mem, val, "shell", GetUserCtx(globals.object))
+            else if typeof(globals.object) == "computer" then
+                globals.pipeResult = ip
+                globals.pipeVars["p"] = ip
+                print(c.cyan + "<b>computer obtained" + c.ennd)
+                GETPERMS(globals.object)
+                EdbAdd(metalib.lib_name, metalib.version, mem, val, "computer", GetUserCtx(globals.object))
+            end if
+            return
+        end if
+
+        if not mem or mem == "" then
+            print(c.yellow + "<b>grab: no working db entry for " + metalib.lib_name + " " + metalib.version + c.ennd)
+            print(c.grey + "  run scan first to populate exploits, or pass mem/val: grab " + ip + " " + port + " [mem] [val]" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        print(c.green + "  using " + metalib.lib_name + "  " + mem + "  " + val + c.ennd)
+    end if
+
+    if inject then
+        globals.object = metalib.overflow(mem, val, inject)
+    else
+        globals.object = metalib.overflow(mem, val)
+    end if
+    globals.remotePath = "/"
+    if typeof(globals.object) == "shell" then
+        globals.pipeResult = ip
+        globals.pipeVars["p"] = ip
+        if IsRoot(globals.object) then
+            print(c.lime + "<b>root shell obtained" + c.ennd)
+        else
+            print(c.cyan + "<b>shell obtained" + c.ennd)
+        end if
+        GETPERMS(globals.object)
+        EdbAdd(metalib.lib_name, metalib.version, mem, val, "shell", GetUserCtx(globals.object))
+    else if typeof(globals.object) == "computer" and acceptComputer then
+        globals.pipeResult = ip
+        globals.pipeVars["p"] = ip
+        print(c.cyan + "<b>computer obtained" + c.ennd)
+        GETPERMS(globals.object)
+        EdbAdd(metalib.lib_name, metalib.version, mem, val, "computer", GetUserCtx(globals.object))
+    else
+        globals.pipeFailed = true
+        if typeof(globals.object) == "computer" then
+            // -c wasn't passed so we're not keeping this object, but
+            // what it IS is worth recording regardless — otherwise
+            // every un-accepted computer result stays unrecorded and
+            // exploit keeps showing "?" for it forever
+            EdbAdd(metalib.lib_name, metalib.version, mem, val, "computer", GetUserCtx(globals.object))
+            print(c.yellow + "<b>grab: got computer object — use -c flag to accept computers" + c.ennd)
+        else
+            print(c.yellow + "<b>grab: result type: " + typeof(globals.object) + " (need shell)" + c.ennd)
+            // record the miss too — a future grab/scanlan against this
+            // exact lib+version can see this mem/val is a known dud
+            EdbAdd(metalib.lib_name, metalib.version, mem, val, typeof(globals.object), "")
+            // exploratory: haven't confirmed what typeof() returns for a
+            // firewall-disable side-effect exploit — flag it loudly if it
+            // ever shows up so we can see the actual type
+            if typeof(globals.object) == "firewall" then print("test: firewall disable returned")
+        end if
+    end if
+end function
+
+// -- Decipher -----------------------------------------------------
+Decipher = function(flag, arg, obj)
+    getCracked = function(hash)
+        return CrackHash(hash)
+    end function
+    if flag == "-h" then
+        parts = arg.split(":")
+        if parts.len < 2 then
+            print(c.yellow + "<b>decipher -h: need [user:hash]" + c.ennd)
+            return
+        end if
+        pw = getCracked(parts[1])
+        if pw then
+            print("<b>password found: " + c.gold + pw + c.ennd)
+        else
+            print(c.yellow + "<b>decipher: not found" + c.ennd)
+        end if
+        return
+    end if
+    if flag == "-f" then
+        if typeof(obj) == "shell" then obj = obj.host_computer
+        f = GetFile(arg, obj, true)
+        if not f then
+            print(c.yellow + "<b>decipher: file not found: " + arg + c.ennd)
+            return
+        end if
+        if f.is_binary then
+            print(c.yellow + "<b>decipher: binary file" + c.ennd)
+            return
+        end if
+        if not f.has_permission("r") then
+            print(c.yellow + "<b>decipher: permission denied" + c.ennd)
+            return
+        end if
+        lines = f.get_content.split(char(10))
+        clean = []
+        for l in lines
+            if l.len > 0 then clean.push(l)
+        end for
+        if clean.len == 0 then
+            print(c.yellow + "<b>decipher: file empty" + c.ennd)
+            return
+        end if
+        if clean.len == 1 then
+            parts = clean[0].split(":")
+            if parts.len < 2 then return
+            pw = getCracked(parts[1])
+            if pw then
+                print("user: " + c.white + parts[0] + c.ennd + "  pass: " + c.gold + pw + c.ennd)
+            else
+                print(c.yellow + "<b>not found: " + parts[0] + c.ennd)
+            end if
+            return
+        end if
+        print("Multiple users:")
+        i = 1
+        for line in clean
+            print("  [" + i + "] " + line)
+            i = i + 1
+        end for
+        sel = ""
+        ok = false
+        while not ok
+            sel = user_input("Select user: ").to_int
+            if typeof(sel) == "number" and sel >= 1 and sel <= clean.len then ok = true
+        end while
+        parts = clean[sel - 1].split(":")
+        print("Deciphering " + parts[0] + " ...")
+        pw = getCracked(parts[1])
+        if pw then
+            print("user: " + c.white + parts[0] + c.ennd + "  pass: " + c.gold + pw + c.ennd)
+        else
+            print(c.yellow + "<b>not found" + c.ennd)
+        end if
+        return
+    end if
+    print(c.yellow + "<b>Usage: decipher [-h user:hash] [-f /path/file]" + c.ennd)
+end function
+
+// -- Decipher (batch) -----------------------------------------------
+// Feeds a comma-separated "user:hash" (or bare "hash") list through
+// CrackHash — same rainbow-table-first lookup harvest uses, so
+// anything already learned cracks instantly and new cracks get
+// memorized for next time. No per-entry prompt, unlike -f's
+// multi-user picker — meant for pipe/clip input, e.g.
+// harvest | clip @a | decipher   or   scanlib ... | decipher
+// Sets pipeResult to the comma-joined "user:pass" hits so the result
+// can keep flowing downstream, e.g. | clip @b or | write creds.txt
+DecipherBatch = function(raw)
+    entries = raw.split(",")
+    found = []
+    total = 0
+    cracked = 0
+    for entry in entries
+        if entry == "" then continue
+        total = total + 1
+        parts = entry.split(":")
+        if parts.len < 2 then
+            user = "?"
+            hash = parts[0]
+        else
+            user = parts[0]
+            hash = parts[1]
+        end if
+        pw = CrackHash(hash)
+        if pw then
+            print(c.lime + "  " + user + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd)
+            cracked = cracked + 1
+            found.push(user + ":" + pw)
+        else
+            print(c.white + "  " + user + c.ennd + c.grey + " : " + c.ennd + c.red + "not found  " + c.grey + "[" + hash[:12] + "...]" + c.ennd)
+        end if
+    end for
+    if found.len > 0 then
+        globals.pipeResult = found.join(",")
+    else
+        globals.pipeResult = ""
+    end if
+    print(c.cyan + "decipher complete — cracked " + cracked + "/" + total + c.ennd)
+end function
+
+// -- Corrupt Log --------------------------------------------------
+CorruptLog = function(obj, autoYes)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    if typeof(obj) != "computer" then
+        print(c.yellow + "<b>corlog: need computer or shell" + c.ennd)
+        return
+    end if
+    if autoYes then
+        ans = "y"
+    else
+        ans = ""
+        while ans != "y" and ans != "n"
+            ans = user_input(c.yellow + "Corrupt system.log? (y/n): " + c.ennd)
+        end while
+    end if
+    if ans == "n" then return
+    test = obj.touch("/home/guest", "system.log")
+    if test == false then
+        print(c.yellow + "<b>corlog: cannot create temp file" + c.ennd)
+        return
+    end if
+    f = obj.File("/home/guest/system.log")
+    if not f then
+        print(c.yellow + "<b>corlog: temp file not found" + c.ennd)
+        return
+    end if
+    res = f.move("/var", "system.log")
+    if res == "permission denied" then
+        print(c.yellow + "<b>corlog: permission denied" + c.ennd)
+        return
+    end if
+    lf = obj.File("/var/system.log")
+    if not lf or lf.is_binary then
+        print(c.yellow + "<b>corlog: failed" + c.ennd)
+        return
+    end if
+    lf.set_owner("root")
+    lf.set_group("root")
+    lf.chmod("o-w")
+    lf.chmod("g-w")
+    print(c.cyan + "system.log corrupted" + c.ennd)
+end function
+
+// -- Enum ---------------------------------------------------------
+Enum = function(myObj, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    if typeof(obj) != "computer" then
+        print(c.yellow + "<b>enum: need remote computer or shell" + c.ennd)
+        return
+    end if
+    if typeof(myObj) == "shell" then myObj = myObj.host_computer
+    pcName = obj.get_name
+    public = obj.public_ip
+    lan    = obj.local_ip
+    procs  = obj.show_procs
+    memList = MemDump(obj.File("/"))
+    myObj.create_folder(myPath, pcName)
+    saveDir = myObj.File(myPath + "/" + pcName)
+    info = "PERMS OWNER GROUP BINARY IMPORT SIZE PATH" + char(10) + char(10)
+    pad = 0
+    for item in memList
+        imp = "no"
+        bin = "no"
+        if item.allow_import then imp = "yes"
+        if item.is_binary then
+            bin = "yes"
+        else
+            if item.has_permission("r") and saveDir then
+                myObj.touch(saveDir.path, pad + "." + item.name)
+                sf = myObj.File(saveDir.path + "/" + pad + "." + item.name)
+                if sf then sf.set_content(item.get_content)
+                pad = pad + 1
+            end if
+        end if
+        info = info + item.permissions + " " + item.owner + " " + item.group + " " + bin + " " + imp + " " + item.size + " " + item.path + char(10)
+    end for
+    data = pcName + char(10) + "public: " + public + "  lan: " + lan + char(10) + char(10)
+    print(data)
+    if saveDir then
+        myObj.touch(saveDir.path, "data.txt")
+        sf = myObj.File(saveDir.path + "/data.txt")
+        if sf then sf.set_content(data)
+    end if
+    print(char(10) + c.cyan + "enum complete: " + pcName + c.ennd)
+end function
+
+// -- Escalate -----------------------------------------------------
+Escalate = function(comp)
+    folder = comp.File("/lib")
+    if not folder then
+        print(c.yellow + "<b>escalate: /lib not found" + c.ennd)
+        return
+    end if
+    libs = folder.get_files
+    if not libs then
+        print(c.yellow + "<b>escalate: no libs" + c.ennd)
+        return
+    end if
+    for lib in libs
+        ml = metaxploit.load("/lib/" + lib.name)
+        if not ml then continue
+        mems = metaxploit.scan(ml)
+        print(c.cyan + "<b>" + ml.lib_name + c.ennd)
+        if not mems then continue
+        for mem in mems
+            items = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
+            if not items then continue
+            for item in items
+                if item == items[0] then continue
+                val = item[item.indexOf("<b>") + 3 : item.indexOf("</b>")]
+                result = ml.overflow(mem, val)
+                if typeof(result) == "shell" or typeof(result) == "computer" then
+                    // record regardless of the y/n/q choice below — the
+                    // exploit itself is valid data whether or not it's
+                    // used this time, same as grab/exploit elsewhere
+                    EdbAdd(ml.lib_name, ml.version, mem, val, typeof(result), GetUserCtx(result))
+                    GETPERMS(result)
+                    ans = ""
+                    while ans != "y" and ans != "n" and ans != "q"
+                        ans = user_input(c.orange + "<b>use this object? (y/n/q): " + c.ennd)
+                    end while
+                    if ans == "q" then return
+                    if ans == "y" then
+                        globals.lObject = result
+                        print(c.orange + "<b>privileges escalated" + c.ennd)
+                        return
+                    end if
+                else
+                    // record the miss too — same completeness as grab/scan
+                    EdbAdd(ml.lib_name, ml.version, mem, val, typeof(result), "")
+                    if typeof(result) == "firewall" then print("test: firewall disable returned")
+                end if
+            end for
+        end for
+    end for
+    print(c.yellow + "<b>escalate: nothing found" + c.ennd)
+end function
+
+// -- GetRoot ------------------------------------------------------
+GetRoot = function(path, password, obj)
+    if typeof(obj) != "shell" then
+        print(c.yellow + "<b>getroot: need remote shell" + c.ennd)
+        return
+    end if
+    test = obj.host_computer.touch(path, "gr.src")
+    if test == false then
+        print(c.yellow + "<b>getroot: cannot create file at: " + path + c.ennd)
+        return
+    end if
+    f = obj.host_computer.File(path + "/gr.src")
+    if not f then
+        print(c.yellow + "<b>getroot: file not found" + c.ennd)
+        return
+    end if
+    f.set_content("password = params[0]; gco = get_custom_object; s = get_shell(""root"",password); if s then gco.rootShell = s")
+    obj.build(path + "/gr.src", path, false)
+    obj.launch(path + "/gr", password)
+    if gco.rootShell then
+        print(c.cyan + "root shell acquired" + c.ennd)
+        globals.object = gco.rootShell
+        gco.rootShell = null
+    else
+        print(c.yellow + "<b>getroot: failed" + c.ennd)
+    end if
+end function
+
+// -- SCP ----------------------------------------------------------
+// scp -u [src] [dst]  — upload from this machine to the held remote
+// object. object.scp() only exists on a shell type (confirmed against
+// GreyScript's own docs — Computer has no .scp()), so a held computer
+// object instead gets a manual read/touch/write copy.
+// scp -d [src] [dst]  — download from the held remote shell to this
+// machine (needs a shell specifically, same .scp()-is-shell-only
+// reason — a bare computer object can't be the download source).
+Scp = function(flag, orig, dest)
+    if not orig or orig == "" then
+        print(c.yellow + "<b>scp: missing source path" + c.ennd)
+        return
+    end if
+    if not dest or dest == "" then
+        print(c.yellow + "<b>scp: missing destination path" + c.ennd)
+        return
+    end if
+    if dest[-1:] == "/" then dest = dest[:-1]
+    fname = orig.split("/")[-1]
+
+    if flag == "-u" then
+        if typeof(object) == "shell" then
+            result = myShell.scp(orig, dest, object)
+            if typeof(result) == "string" and result != "" then
+                print(c.yellow + "<b>scp: " + result + c.ennd)
+            else
+                print(c.green + "  " + orig + " -> " + dest + "/" + fname + c.ennd)
+            end if
+        else if typeof(object) == "computer" then
+            src = myComp.File(orig)
+            if not src then
+                print(c.yellow + "<b>scp: source file not found: " + orig + c.ennd)
+                return
+            end if
+            content = src.get_content
+            object.touch(dest, fname)
+            dfile = object.File(dest + "/" + fname)
+            if not dfile then
+                print(c.yellow + "<b>scp: could not create destination file" + c.ennd)
+                return
+            end if
+            dfile.set_content(content)
+            print(c.green + "  " + orig + " -> " + dest + "/" + fname + c.ennd)
+        else
+            print(c.yellow + "<b>scp: not holding a remote shell/computer" + c.ennd)
+        end if
+    else if flag == "-d" then
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>scp: -d needs a held remote shell" + c.ennd)
+            return
+        end if
+        result = object.scp(orig, dest, myShell)
+        if typeof(result) == "string" and result != "" then
+            print(c.yellow + "<b>scp: " + result + c.ennd)
+        else
+            print(c.green + "  " + fname + " -> " + dest + "/" + fname + c.ennd)
+        end if
+    else
+        print(c.yellow + "<b>scp: unknown flag " + flag + "  (use -u or -d)" + c.ennd)
+    end if
+end function
+
+// -- Set Target ---------------------------------------------------
+SetTarget = function(ip, flag)
+    if not is_valid_ip(ip) then
+        print(c.yellow + "<b>set: invalid ip" + c.ennd)
+        return
+    end if
+    if is_lan_ip(ip) then
+        if flag == "-b" then
+            globals.bounceTarget = ip
+            print(c.cyan + "bounce target: " + ip + c.ennd)
+        else
+            globals.localTarget = ip
+            print(c.cyan + "local target: " + ip + c.ennd)
+        end if
+        return
+    end if
+    globals.publicTarget = ip
+    print(c.cyan + "public target: " + ip + c.ennd)
+end function
+
+// -- Tree ---------------------------------------------------------
+Tree = function(path, obj, local, prefix)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    if prefix == null then
+        f = GetFile(path, obj, local)
+        if not f then
+            print(c.yellow + "<b>tree: not found: " + path + c.ennd)
+            return
+        end if
+        print(c.cyan + "<b>" + f.path + c.ennd)
+        prefix = ""
+    end if
+    f = GetFile(path, obj, local)
+    if not f then return
+    items = f.get_folders + f.get_files
+    i = 0
+    for item in items
+        isLast = (i == items.len - 1)
+        connector = "+-- "
+        nextPrefix = prefix + "|   "
+        if isLast then
+            connector = "+-- "
+            nextPrefix = prefix + "    "
+        end if
+        if item.is_folder then
+            print(c.grey + prefix + connector + c.ennd + c.gold + "<b>" + item.name + "/" + c.ennd)
+            Tree(item.path, obj, local, nextPrefix)
+        else
+            col = c.white
+            if item.is_binary then col = c.cyan
+            print(c.grey + prefix + connector + c.ennd + col + item.name + c.ennd)
+        end if
+        i = i + 1
+    end for
+end function
+
+Ls = function(inp, path, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    folderPath = path
+    if inp.len > 1 and inp[inp.len - 1].indexOf("-") == null then
+        folderPath = inp[inp.len - 1]
+    end if
+    folder = GetFile(folderPath, obj, local)
+    if not folder then
+        print(c.yellow + "<b>ls: not found" + c.ennd)
+        return
+    end if
+    showAll  = inp.len > 1 and inp[1].indexOf("a") != null
+    showLong = inp.len > 1 and inp[1].indexOf("l") != null
+    items = folder.get_folders + folder.get_files
+    out = ""
+    for item in items
+        if showAll or item.name.indexOf(".") != 0 then
+            if out.len > 0 then out = out + char(10)
+            if showLong then
+                out = out + item.permissions + " " + item.owner + " " + item.group + " " + item.size + " " + item.name
+            else
+                out = out + item.name
+            end if
+        end if
+    end for
+    print(format_columns(out))
+end function
+
+// -- Mkdir --------------------------------------------------------
+Mkdir = function(path, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    parts = path.split("/")
+    name = parts[parts.len - 1]
+    parts.remove(parts.len - 1)
+    parent = parts.join("/")
+    if parent == "" then
+        if local then
+            parent = myPath
+        else
+            parent = remotePath
+        end if
+    end if
+    pf = GetFile(parent, obj, local)
+    if not pf then
+        print(c.yellow + "<b>mkdir: parent not found: " + parent + c.ennd)
+        return
+    end if
+    obj.create_folder(pf.path, name)
+end function
+
+// -- Rm -----------------------------------------------------------
+Rm = function(path, recursive, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>rm: not found: " + path + c.ennd)
+        return
+    end if
+    if not f.has_permission("w") then
+        print(c.yellow + "<b>rm: permission denied" + c.ennd)
+        return
+    end if
+    if f.is_folder and not recursive then
+        print(c.yellow + "<b>rm: is a directory, use rm -r" + c.ennd)
+        return
+    end if
+    name = f.name
+    out = f.delete
+    if out and out.len > 0 then
+        print(out)
+    else
+        print("<b>deleted: " + name)
+    end if
+end function
+
+// -- Mv -----------------------------------------------------------
+Mv = function(src, dst, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(src, obj, local)
+    if not f then
+        print(c.yellow + "<b>mv: not found: " + src + c.ennd)
+        return
+    end if
+    parts = dst.split("/")
+    newName = parts[parts.len - 1]
+    parts.remove(parts.len - 1)
+    parent = parts.join("/")
+    if parent == "" then parent = f.parent.path
+    df = obj.File(parent)
+    if not df then
+        print(c.yellow + "<b>mv: destination not found" + c.ennd)
+        return
+    end if
+    f.move(df.path, newName)
+end function
+
+// -- Cp -----------------------------------------------------------
+Cp = function(src, dst, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(src, obj, local)
+    if not f then
+        print(c.yellow + "<b>cp: not found: " + src + c.ennd)
+        return
+    end if
+    parts = dst.split("/")
+    newName = parts[parts.len - 1]
+    parts.remove(parts.len - 1)
+    parent = parts.join("/")
+    if parent == "" then parent = f.parent.path
+    out = f.copy(parent, newName)
+    if out and out != 1 then print(out)
+end function
+
+// -- Cat ----------------------------------------------------------
+Cat = function(path, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>cat: not found: " + path + c.ennd)
+        return
+    end if
+    if f.is_binary then
+        print(c.yellow + "<b>cat: binary file" + c.ennd)
+        return
+    end if
+    if not f.has_permission("r") then
+        print(c.yellow + "<b>cat: permission denied" + c.ennd)
+        return
+    end if
+    print(f.get_content)
+end function
+
+// -- Chmod / Chown / Chgrp ----------------------------------------
+Chmod = function(perms, path, rec, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>chmod: not found: " + path + c.ennd)
+        return
+    end if
+    out = f.chmod(perms, rec)
+    if out then print(out)
+end function
+
+Chown = function(owner, path, rec, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>chown: not found: " + path + c.ennd)
+        return
+    end if
+    out = f.set_owner(owner, rec)
+    if out then print(out)
+end function
+
+Chgrp = function(group, path, rec, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>chgrp: not found: " + path + c.ennd)
+        return
+    end if
+    out = f.set_group(group, rec)
+    if out then print(out)
+end function
+
+// -- Search -------------------------------------------------------
+Search = function(term, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    all = MemDump(obj.File("/"))
+    if not all then return
+    for item in all
+        if term == "" or item.name.indexOf(term) != null or item.path.indexOf(term) != null then
+            print(item.path)
+        end if
+    end for
+end function
+
+// -- Kill ---------------------------------------------------------
+Kill = function(pid, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    pidInt = pid.to_int
+    if typeof(pidInt) != "number" then
+        print(c.yellow + "<b>kill: PID must be a number" + c.ennd)
+        return
+    end if
+    out = obj.close_program(pidInt)
+    if out == true then
+        print("process " + pid + " closed")
+    else
+        print(c.yellow + "process " + pid + " not found" + c.ennd)
+    end if
+end function
+
+// -- Touch --------------------------------------------------------
+Touch = function(path, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    parts = path.split("/")
+    name = parts[parts.len - 1]
+    parts.remove(parts.len - 1)
+    parent = parts.join("/")
+    if parent == "" then
+        if local then
+            parent = myPath
+        else
+            parent = remotePath
+        end if
+    end if
+    pf = obj.File(parent)
+    if not pf then
+        print(c.yellow + "<b>touch: parent not found" + c.ennd)
+        return
+    end if
+    out = obj.touch(pf.path, name)
+    if out and out != 1 then
+        print(out)
+    else
+        print("<b>created: " + path)
+    end if
+end function
+
+// -- Passwd -------------------------------------------------------
+Passwd = function(user, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    pw = user_input("New password for " + user + ": ", true)
+    out = obj.change_password(user, pw)
+    if out == true then
+        print("<b>passwd: changed")
+    else if out then
+        print(c.yellow + out + c.ennd)
+    end if
+end function
+
+// -- UserAdd / UserDel --------------------------------------------
+UserAdd = function(user, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    pw = user_input("Password for " + user + ": ", true)
+    out = obj.create_user(user, pw)
+    if out == true then
+        print("<b>user created: " + user)
+    else if out then
+        print(c.yellow + out + c.ennd)
+    end if
+end function
+
+UserDel = function(user, recursive, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    del = 0
+    if recursive then del = 1
+    out = obj.delete_user(user, del)
+    if out == true then
+        print("<b>user deleted: " + user)
+    else if out then
+        print(c.yellow + out + c.ennd)
+    end if
+end function
+
+// -- Ping ---------------------------------------------------------
+Ping = function(ip, comp)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if ip == "bt" then ip = bounceTarget
+    r = comp.ping(ip)
+    if r then
+        if typeof(r) == "string" then
+            print(r)
+        else
+            print("<b>ping: " + ip + " is up")
+        end if
+    else
+        print(c.yellow + "<b>ping: unreachable" + c.ennd)
+    end if
+end function
+
+// -- Whois --------------------------------------------------------
+Whois = function(ip)
+    if ip == "pt" then ip = publicTarget
+    if not is_valid_ip(ip) or is_lan_ip(ip) then
+        print(c.yellow + "<b>whois: need a public ip" + c.ennd)
+        return
+    end if
+    print(whois(ip))
+    if publicTarget == "" then SetTarget(ip, null)
+end function
+
+// -- Ifconfig -----------------------------------------------------
+Ifconfig = function(comp)
+    router = get_router
+    if comp.is_network_active then
+        lip = comp.local_ip
+        pip = router.public_ip
+        gw  = comp.network_gateway
+        if comp.active_net_card == "WIFI" then
+            mode = "WIFI  essid:" + router.essid_name
+        else
+            mode = "ETHERNET"
+        end if
+    else
+        lip  = "0.0.0.0"
+        pip  = "0.0.0.0"
+        gw   = "0.0.0.0"
+        mode = "DISCONNECTED"
+    end if
+    print(char(10) + mode + char(10) + "public : " + pip + char(10) + "local  : " + lip + char(10) + "gateway: " + gw + char(10))
+end function
+
+// -- Drop ---------------------------------------------------------
+Drop = function(flag)
+    ans = ""
+    if flag == "-r" then
+        while ans != "y" and ans != "n"
+            ans = user_input(c.yellow + "<b>drop remote object? (y/n): " + c.ennd)
+        end while
+        if ans == "y" then
+            // used to also null gco.rshellServer/rshellPort here, but
+            // those are unrelated to whatever shell you happen to be
+            // holding — dropping a target you're done with shouldn't
+            // forget the rshell server config too, since the actual
+            // rshelld service on that machine keeps running regardless.
+            // Was breaking "rshell init, drop, grab something else,
+            // rshell infect later" with a false "no server configured".
+            globals.object = null
+        end if
+    end if
+    if flag == "-l" then
+        while ans != "y" and ans != "n"
+            ans = user_input(c.yellow + "<b>drop local object? (y/n): " + c.ennd)
+        end while
+        if ans == "y" then
+            globals.lObject = null
+            globals.myShell = get_shell
+            globals.myComp  = myShell.host_computer
+        end if
+    end if
+end function
+
+// -- Rterminal ----------------------------------------------------
+Rterminal = function(obj)
+    if typeof(obj) != "shell" then
+        print(c.yellow + "<b>rterminal: not holding remote shell" + c.ennd)
+        return
+    end if
+    ans = user_input(c.yellow + "Open terminal on remote machine? (y/n): " + c.ennd)
+    if ans == "y" then obj.start_terminal
+end function
+
+// -- RouterData ---------------------------------------------------
+RouterData = function(ip, port)
+    if not port then port = 0
+    if typeof(port) == "string" then port = port.to_int
+    r  = get_router(ip)
+    ns = metaxploit.net_use(ip, port)
+    if r then
+        devs = r.devices_lan_ip
+        out = char(10) + "connected devices:"
+        for d in devs
+            out = out + char(10) + "  " + d
+        end for
+        print(out)
+        print("firewall: " + r.firewall_rules)
+    end if
+    if ns then
+        print("gateways    : " + ns.get_num_conn_gateway)
+        print("portforwards: " + ns.get_num_portforward)
+        print("users       : " + ns.get_num_users)
+        print("root active : " + ns.is_root_active_user)
+    end if
+end function
+
+// -- ShowHelp -----------------------------------------------------
+ShowHelp = function(flag)
+    if flag == "-a" or flag == "-l" then
+        print(char(10) + c.lime + "<b>-- LOCAL ----------------------------------------------------" + c.ennd + char(10))
+        print(c.yellow+"<b>ls</b>"+c.ennd+"         ls [opt:-l -a] [opt:path]")
+        print(c.yellow+"<b>tree</b>"+c.ennd+"       tree [opt:path]  (visual file tree)")
+        print(c.yellow+"<b>cd</b>"+c.ennd+"         cd [path]  /  cd ..")
+        print(c.yellow+"<b>cat</b>"+c.ennd+"        cat [file]")
+        print(c.yellow+"<b>cp</b>"+c.ennd+"         cp [src] [dst]")
+        print(c.yellow+"<b>mv</b>"+c.ennd+"         mv [src] [dst]")
+        print(c.yellow+"<b>rm</b>"+c.ennd+"         rm [opt:-r] [path]")
+        print(c.yellow+"<b>mkdir</b>"+c.ennd+"      mkdir [path]")
+        print(c.yellow+"<b>touch</b>"+c.ennd+"      touch [path/file]")
+        print(c.yellow+"<b>chmod</b>"+c.ennd+"      chmod [opt:-R] [perms] [path]")
+        print(c.yellow+"<b>chown</b>"+c.ennd+"      chown [opt:-R] [owner] [path]")
+        print(c.yellow+"<b>chgrp</b>"+c.ennd+"      chgrp [opt:-R] [group] [path]")
+        print(c.yellow+"<b>search</b>"+c.ennd+"     search [opt:keyword]")
+        print(c.yellow+"<b>ps</b>"+c.ennd+"         ps")
+        print(c.yellow+"<b>kill</b>"+c.ennd+"       kill [PID]")
+        print(c.yellow+"<b>passwd</b>"+c.ennd+"     passwd [user]")
+        print(c.yellow+"<b>useradd</b>"+c.ennd+"    useradd [user]")
+        print(c.yellow+"<b>userdel</b>"+c.ennd+"    userdel [opt:-r] [user]")
+        print(c.yellow+"<b>pwd</b>"+c.ennd+"        pwd")
+        print(c.yellow+"<b>whoami</b>"+c.ennd+"     whoami")
+        print(c.yellow+"<b>clear</b>"+c.ennd+"      clear")
+        print(c.yellow+"<b>decipher</b>"+c.ennd+"   decipher [-h user:hash] [-f /path]")
+        print(c.yellow+"<b>cover</b>"+c.ennd+"      cover  (corlog + wipe + drop shell)")
+        print(c.yellow+"<b>corlog</b>"+c.ennd+"     corrupt system.log on current object")
+        print(c.yellow+"<b>escalate</b>"+c.ennd+"   escalate local privileges via lib scan")
+        print(c.yellow+"<b>push</b>"+c.ennd+"       push current object onto stack")
+        print(c.yellow+"<b>pop</b>"+c.ennd+"        pop object from stack -> set as active")
+        print(c.yellow+"<b>stack</b>"+c.ennd+"      show all stacked objects")
+        print(c.yellow+"<b>swap</b>"+c.ennd+"       swap [opt:index]  (swap active with stack entry)")
+        print(c.yellow+"<b>drop</b>"+c.ennd+"       drop [-l] [-r]")
+        print(c.yellow+"<b>terminal</b>"+c.ennd+"   open new local terminal")
+        print(c.yellow+"<b>randip</b>"+c.ennd+"     generate a random IP")
+    end if
+    if flag == "-a" or flag == "-n" then
+        print(char(10) + c.lime + "<b>-- NETWORK --------------------------------------------------" + c.ennd + char(10))
+        print(c.yellow+"<b>nmap</b>"+c.ennd+"       nmap [ip/pt/lt] [-y]  (-y: auto-confirm setting it as target, no prompt)")
+        print(c.yellow+"<b>ping</b>"+c.ennd+"       ping [ip/pt/lt/bt]")
+        print(c.yellow+"<b>whois</b>"+c.ennd+"      whois [public ip]")
+        print(c.yellow+"<b>ifconfig</b>"+c.ennd+"   ifconfig")
+        print(c.yellow+"<b>set</b>"+c.ennd+"        set [ip] [opt:-b]")
+        print(c.yellow+"<b>unset</b>"+c.ennd+"      unset [-p] [-l] [-b] [-a]")
+        print(c.yellow+"<b>ssh</b>"+c.ennd+"        ssh [user@pass] [ip] [opt:port]  |  ssh [saved-name]")
+        print(c.yellow+"<b>sshsave</b>"+c.ennd+"    sshsave [name] [user@pass] [ip] [opt:port]  (save your own login for quick reconnect)")
+        print(c.yellow+"<b>sshlist</b>"+c.ennd+"    sshlist  (show saved portals)")
+        print(c.yellow+"<b>sshdel</b>"+c.ennd+"     sshdel [name]  (remove a saved portal)")
+        print(c.yellow+"<b>scp</b>"+c.ennd+"        scp [-u|-d] [src] [dst]")
+        print(c.yellow+"<b>routerdata</b>"+c.ennd+"  routerdata [ip] [opt:port]")
+        print(c.yellow+"<b>proxy</b>"+c.ennd+"      proxy [hops]  (build anonymous chain)")
+        print(c.yellow+"<b>proxystatus</b>"+c.ennd+"  show current proxy chain")
+        print(c.yellow+"<b>proxyclear</b>"+c.ennd+"   clear chain + drop object")
+    end if
+    if flag == "-a" or flag == "-h" then
+        print(char(10) + c.lime + "<b>-- HACKING --------------------------------------------------" + c.ennd + char(10))
+        print(c.yellow+"<b>edb</b>"+c.ennd+"        edb  |  edb use/search/add/del/clear  (exploit database)")
+        print(c.yellow+"<b>scan</b>"+c.ennd+"       scan [ip] [port] [lan-ip] -lib [lib.so] [opt:mem] [opt:val]")
+        print(c.yellow+"<b>scanlan</b>"+c.ennd+"    scanlan [ip] [port] [opt:-c] [opt:-l]  (direct ip: recon only, caches for grab; LAN ip: auto-pivots + attempts)")
+        print(c.grey+"              -l: scan locally instead of via a held remote shell (e.g. after jump)"+c.ennd)
+        print(c.yellow+"<b>grab</b>"+c.ennd+"       grab [ip] [port] [mem] [val] [opt:inject]")
+        print(c.yellow+"<b>exploit</b>"+c.ennd+"    exploit [ip] [port] [opt:-c]  (interactive: pick a candidate + inject value, direct ips only)")
+		print(c.yellow+"<b>qg</b>"+c.ennd+"         qg [ip] [port] (quick grab a shell)")
+        print(c.yellow+"<b>getroot</b>"+c.ennd+"    getroot [path] [password]")
+        print(c.yellow+"<b>autoroot</b>"+c.ennd+"   autoroot  |  autoroot [ip] [user] [pass]  |  autoroot -l [user]  (crack local password via ChainSaw)")
+		print(c.grey + char(9) + "<b>ar                       -> escalate to root using Dictionary Attack (remote); ar -l [user] for local" + c.ennd)
+        print(c.yellow+"<b>enum</b>"+c.ennd+"       enum [-l] [-r]  (full filesystem dump)")
+        print(c.yellow+"<b>harvest</b>"+c.ennd+"    harvest  (crack Mail.txt + Bank.txt)")
+        print(c.yellow+"<b>wifi</b>"+c.ennd+"       wifi  (scan + crack nearby WiFi networks)")
+        print(c.yellow+"<b>siphon</b>"+c.ennd+"     siphon [opt:-a/-b/-m/-p/-l/-n]  (network-wide harvest)")
+        print(c.yellow+"<b>wstack</b>"+c.ennd+"     wstack [opt:-l] [opt:libname]  (bounce LAN, push ROOT computers to stack)")
+        print(c.yellow+"<b>wstackall</b>"+c.ennd+"  wstackall [opt:-l] [opt:libname]  (same as wstack, but also keeps guest-level shell/computer bounces)")
+        print(c.grey+"              no -l: uploads + launches on the held shell so you don't have to jump first"+c.ennd)
+        print(c.grey+"              (confirmed: LAN visibility from outside a network is much more limited than"+c.ennd)
+        print(c.grey+"              from a script running inside it, so this isn't just convenience)"+c.ennd)
+        print(c.grey+"              -l: run inline instead (like uselib) — you must already be positioned here"+c.ennd)
+        print(c.grey+"              no libname given: uses globals.activeLib if one's claimed/loaded, else"+c.ennd)
+        print(c.grey+"              defaults to init.so, falling back to libhttp.so if missing"+c.ennd)
+        print(c.grey+"              whatever lib actually gets used lands in globals.activeLib too (like scanlib)"+c.ennd)
+        print(c.grey+"              tries every candidate per device — only a root-level computer counts as a"+c.ennd)
+        print(c.grey+"              hit, a guest-only bounce is discarded instead of settled for"+c.ennd)
+        print(c.yellow+"<b>cascade</b>"+c.ennd+"    cascade  (wstack from every shell on stack simultaneously)")
+        print(c.yellow+"<b>lanenum</b>"+c.ennd+"    lanenum [opt:-l] [opt:@var]  (list LAN IPs, clip to @var)")
+        print(c.grey+"              -l: enumerate locally instead of via a held remote shell (e.g. after jump)"+c.ennd)
+        print(c.yellow+"<b>ipenum</b>"+c.ennd+"     ipenum [port] [opt:@var]  (find LAN IPs with port open, clip to @var)")
+        print(c.yellow+"<b>foreach</b>"+c.ennd+"    foreach @list | cmd @each ...  (run pipeline per item)")
+        print(c.yellow+"<b>mac</b>"+c.ennd+"        mac <name>  |  mac list  |  mac show <name>  (run macro from /root/ai/mac/)")
+        print(c.yellow+"<b>pwnlan</b>"+c.ennd+"     pwnlan  (exploit all LAN devices)")
+        print(c.yellow+"<b>netmap</b>"+c.ennd+"     netmap [opt:-l]  (LAN recon only, no attacking — fast; scanlan/grab a target after)")
+        print(c.grey+"              -l: map locally instead of via a held remote shell/computer (e.g. after jump)"+c.ennd)
+        print(c.yellow+"<b>hacklan</b>"+c.ennd+"    hacklan [lan-ip]  (bounce to LAN device)")
+        print(c.yellow+"<b>autoharvest</b>"+c.ennd+"  autoharvest [hops] [max_targets]")
+        print(c.yellow+"<b>buildrt</b>"+c.ennd+"    build rainbow table in memory")
+        print(c.yellow+"<b>rtgen</b>"+c.ennd+"      rtgen  (build + write rainbow table to ~/rt/)")
+        print(c.yellow+"<b>crack</b>"+c.ennd+"      crack [hash]")
+        print(c.yellow+"<b>jump</b>"+c.ennd+"       jump [opt:--rshell] [opt:-b|--bin] [opt:--loadlib name]  (copy phantom to target)")
+        print(c.grey+"              -b/--bin: copy just the phantom binary, not the whole tp folder — if that flag"+c.ennd)
+        print(c.grey+"              misbehaves, jumpbin does the same thing with no flag parsing at all"+c.ennd)
+        print(c.grey+"              --loadlib name: target auto-loads that lib from ITS OWN /lib and exits"+c.ennd)
+        print(c.grey+"              immediately, no interactive prompt — chain with |> uselib ... for a full"+c.ennd)
+        print(c.grey+"              jump+load-remote-lib+bring-home+attack in one command. implies -b/--bin"+c.ennd)
+        print(c.yellow+"<b>jumpbin</b>"+c.ennd+"    jumpbin [opt:--loadlib name]  (dedicated bin-only jump, no flags — see jump -b above)")
+        print(c.yellow+"<b>leave</b>"+c.ennd+"      leave  |  leave -lib [name] [opt:port]  (leave held shell/computer, or a lib name, for another phantom session to claim)")
+        print(c.grey+"              -lib auto-captures the held shell's ip if you're holding one, so claim can redial +"+c.ennd)
+        print(c.grey+"              dump_lib on the far end if the lib isn't sitting in /lib there as an actual file"+c.ennd)
+        print(c.yellow+"<b>claim</b>"+c.ennd+"      claim  (pick up whatever leave left — shell/computer lands in object, a lib gets loaded fresh into globals.activeLib)")
+        print(c.yellow+"<b>carry</b>"+c.ennd+"      carry  |  carry -home  |  carry -c  (snapshot held shell into gco.object, or THIS machine into gco.homeShell, for any script/jump to read back; -c clears both)")
+        print(c.yellow+"<b>loadlib</b>"+c.ennd+"    loadlib [name]  |  loadlib -c  (load a local lib straight into globals.activeLib, or clear it)")
+        print(c.yellow+"<b>loadmx</b>"+c.ennd+"     loadmx [opt:path]  |  loadmx -c  (load a local metaxploit.so into globals.activeMx, or clear it)")
+        print(c.grey+"              run before jump/jumpbin so uselib scans with YOUR metaxploit on the far end"+c.ennd)
+        print(c.yellow+"<b>libvers</b>"+c.ennd+"    libvers  (list every lib in this machine's own /lib with its version)")
+        print(c.yellow+"<b>uselib</b>"+c.ennd+"     uselib [opt:inject] [opt:-l lanip] [opt:-a|-sh|-c] [opt:-s]  (scan/exploit with globals.activeLib)")
+        print(c.grey+"              -a: push every shell+computer   -sh: shells only   -c: computers only   (dedupes stack)"+c.ennd)
+        print(c.grey+"              -s: recon only, record candidates to db.txt without attacking"+c.ennd)
+        print(c.grey+"              -c: computer-ONLY — without it, only a shell counts as a hit; with it,"+c.ennd)
+        print(c.grey+"                  only a computer does (a shell result gets rejected, not accepted too)."+c.ennd)
+        print(c.grey+"                  implies -a: tries every candidate, pushes every computer found"+c.ennd)
+        print(c.grey+"              -s: recon only, banks candidates to db.txt without calling overflow()"+c.ennd)
+        print(c.grey+"              -l lanip: bounce onto a LAN device (same as a bare positional inject arg)"+c.ennd)
+        print(c.grey+"              -a: try every candidate, push every match found to the stack (still"+c.ennd)
+        print(c.grey+"                  shells-only unless -c is also given)"+c.ennd)
+        print(c.grey+"                  (default stops at the first hit, lands it in globals.object)"+c.ennd)
+        print(c.yellow+"<b>activelib</b>"+c.ennd+"  activelib  (debug: show what's held in globals.activeLib)")
+        print(c.yellow+"<b>libdebug</b>"+c.ennd+"   libdebug [opt:-c]  (debug: show/clear gco.claimLib)")
+        print(c.yellow+"<b>plant</b>"+c.ennd+"      plant [opt:lib] [opt:dest]  (upload lib from /root/InsecureLibs)")
+        print(c.yellow+"<b>rshell</b>"+c.ennd+"     rshell  |  rshell start/stop/init/infect/info")
+    end if
+    if flag == "-a" or flag == "-r" then
+        print(char(10) + c.lime + "<b>-- REMOTE ---------------------------------------------------" + c.ennd + char(10))
+        print(c.yellow+"<b>rls</b>"+c.ennd+"        rls [opt:path]")
+        print(c.yellow+"<b>rtree</b>"+c.ennd+"      rtree [opt:path]  (visual file tree on remote)")
+        print(c.yellow+"<b>rcd</b>"+c.ennd+"        rcd [path]")
+        print(c.yellow+"<b>rcat</b>"+c.ennd+"       rcat [file]")
+        print(c.yellow+"<b>rcp rmv rrm</b>"+c.ennd+"  rcp/rmv/rrm [opt:-r] [src] [dst]")
+        print(c.yellow+"<b>rmkdir rtouch</b>"+c.ennd+"  rmkdir/rtouch [path]")
+        print(c.yellow+"<b>rchmod rchown rchgrp</b>"+c.ennd+"  [opt:-R] [val] [path]")
+        print(c.yellow+"<b>rsearch</b>"+c.ennd+"    rsearch [opt:keyword]")
+        print(c.yellow+"<b>rps</b>"+c.ennd+"        show remote processes")
+        print(c.yellow+"<b>rkill</b>"+c.ennd+"      rkill [PID]")
+        print(c.yellow+"<b>rpasswd</b>"+c.ennd+"    rpasswd [user]")
+        print(c.yellow+"<b>ruseradd ruserdel</b>"+c.ennd+"  ruseradd/ruserdel [opt:-r] [user]")
+        print(c.yellow+"<b>rcorlog</b>"+c.ennd+"    rcorlog [-y]  (corrupt remote system.log; -y auto-confirms, no prompt)")
+        print(c.yellow+"<b>rterminal</b>"+c.ennd+"  open terminal on remote machine")
+        print(c.yellow+"<b>rwhoami</b>"+c.ennd+"    current user on held remote shell")
+        print(c.yellow+"<b>rdecipher</b>"+c.ennd+"  rdecipher [-h user:hash] [-f /path]")
+        print(c.grey+"  all remote commands work on held remote object" + c.ennd)
+    end if
+    if flag == "" or flag == null then
+        print(char(10) + c.cyan + "<b>PHANTOM v1.2" + c.ennd + c.grey + "  by operator" + c.ennd)
+        print(c.grey + "help [-a] all   [-l] local   [-n] network   [-h] hacking   [-r] remote" + c.ennd)
+        print(char(10) + c.gold + "quick ref:" + c.ennd)
+        print(c.grey + "  proxy [hops]        -> build anonymous chain first" + c.ennd)
+        print(c.grey + "  scan pt 0           -> find router exploits" + c.ennd)
+        print(c.grey + "  grab pt 0 [m] [v]   -> get router shell" + c.ennd)
+        print(c.grey + "  autoroot            -> escalate to root using ChainSaw" + c.ennd)
+		
+        print(c.grey + "  upgrade             -> check local lib updates (upgrade -u to install)" + c.ennd)
+        print(c.grey + "  plant               -> put weaklib into remote /lib" + c.ennd)
+        print(c.grey + "  scan pt 0 [lanip] -lib libhttp.so  -> bounce to LAN device" + c.ennd)
+        print(c.grey + "  jump --rshell       -> set up rshell server on target" + c.ennd)
+        print(c.grey + "  push/pop/stack/swap -> juggle multiple objects" + c.ennd)
+        print(c.grey + "  cover               -> clean up traces" + c.ennd)
+    end if
+end function
+
+
+// -- RTGen - write rainbow table to disk --------------------------
+
+CrackHash = function(hash)
+    if not gco.hasIndex("rt") or gco.rt == null then buildRainbowTable
+    if gco.rt.hasIndex(hash) then return gco.rt[hash]
+    if gco.crypto then
+        pw = gco.crypto.decipher(hash)
+        if pw then RtLearn(hash, pw)
+        return pw
+    end if
+    return null
+end function
+
+// -- ArLocal --------------------------------------------------------
+// Local counterpart to ar/autoroot. The remote path (ar, below) uploads
+// a compiled dictionary-attack binary to a held/connected target and
+// cracks its /etc/shadow there — there's no "target" for that when the
+// machine to crack is the one phantom is already running on. Instead
+// this reuses ChainSaw's own local mode: ChainSaw.connect falls back to
+// get_shell(user, password) (a local login attempt) whenever
+// ChainSaw.ip is blank, same mechanism 'chainsaw run' uses without
+// --ip=. A successful shell goes to lObject, matching Escalate's
+// local-privesc convention — object/remotePath are for a held REMOTE
+// target, which this isn't.
+ArLocal = function(userArg)
+    user = "root"
+    if userArg then user = userArg
+    print(c.orange + "Cracking local " + user + " password (ChainSaw)..." + c.ennd)
+    ChainSaw.ip = ""
+    ChainSaw.user = user
+    ChainSaw.init
+    result = ChainSaw.crack(true)
+    if result then
+        globals.lObject = result
+        // also leave it in gco for another phantom instance to pick up
+        // via "claim" — e.g. jump to a target, autoroot -l yourself
+        // there, then run claim from your original session to have
+        // that root shell land in globals.object back home. gco is a
+        // persistent, player-scoped store (same reason slb.src/wsx.src
+        // already hand live shell/computer objects back across a
+        // launch boundary between two different machines), so this
+        // works the same way across two independent phantom sessions.
+        gco.claimShell = result
+        print(c.lime + "<b>local " + user + " shell acquired!" + c.ennd)
+        print(c.gold + "  password: " + ChainSaw.password + c.ennd)
+        print(c.grey + "  left for pickup — run 'claim' from another phantom session to grab it" + c.ennd)
+        globals.pipeFailed = false
+    else
+        print(c.yellow + "<b>ar -l: failed to crack local " + user + " password" + c.ennd)
+        globals.pipeFailed = true
+    end if
+end function
+
+// -- AutoRoot -----------------------------------------------------
+ar = function(ip, user, pass)
+    if typeof(object) != "shell" then
+        if not ip then
+            print(c.yellow + "<b>autoroot: not holding remote shell" + c.ennd)
+            print(c.grey + "  usage: autoroot [ip] [user] [pass]" + c.ennd)
+            return
+        end if
+        print(c.orange + "Connecting to " + ip + " ..." + c.ennd)
+        s = myShell.connect_service(ip, 22, user, pass, "ssh")
+        if typeof(s) != "shell" then
+            print(c.yellow + "<b>autoroot: could not connect to " + ip + c.ennd)
+            return
+        end if
+        globals.object = s
+        globals.remotePath = "/"
+        print(c.cyan + "shell obtained: " + ip + c.ennd)
+    end if
+    comp = object.host_computer
+
+    // already root? skip
+    if IsRoot(object) then
+        print(c.lime + "autoroot: already have root on " + comp.public_ip + c.ennd)
+        return
+    end if
+
+    // find writable path on target
+    writePath = null
+    for path in ["/home/guest", "/tmp", "/root"]
+        testDir = comp.File(path)
+        if testDir and testDir.has_permission("w") then
+            writePath = path
+            break
+        end if
+    end for
+    if not writePath then
+        print(c.yellow + "<b>autoroot: no writable path on target" + c.ennd)
+        return
+    end if
+
+    // upload ar binary
+    arBin = myComp.File(currentPath + "/ar")
+    if not arBin then
+        print(c.yellow + "<b>autoroot: ar binary not found in " + currentPath + c.ennd)
+        print(c.grey + "  build ar.src locally: build ar.src " + currentPath + c.ennd)
+        return
+    end if
+    print(c.orange + "Uploading ar to " + writePath + " ..." + c.ennd)
+    myShell.scp(currentPath + "/ar", writePath, object)
+    binFile = comp.File(writePath + "/ar")
+    if not binFile then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>autoroot: ar upload failed" + c.ennd)
+        return
+    end if
+    // dictionary attack from the raw seed words (pregens/rockyou/onboard
+    // tables) — real words only, not the markov-generated rainbow table
+     // pass 1 dictionary (tables), pass 2 markov-generated (rt) as fallback
+    if not gco.hasIndex("seedWords") or gco.seedWords == null then buildRainbowTable
+    if not gco.hasIndex("rt") or gco.rt == null then buildRainbowTable
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    passList = []
+    seen = {}
+
+    // pass 1: real dictionary words
+    for pw in gco.seedWords
+        ok = true
+        for i in range(0, pw.len - 1)
+            if allowed.indexOf(pw[i]) == null then ok = false; break
+        end for
+        if ok and not seen.hasIndex(pw) then
+            seen[pw] = 1
+            passList.push(pw)
+        end if
+    end for
+
+    // pass 2: markov-generated passwords from the rainbow table
+    for hash in gco.rt.indexes
+        pw = gco.rt[hash]
+        ok = true
+        for i in range(0, pw.len - 1)
+            if allowed.indexOf(pw[i]) == null then ok = false; break
+        end for
+        if ok and not seen.hasIndex(pw) then
+            seen[pw] = 1
+            passList.push(pw)
+        end if
+    end for
+
+    print(c.orange + "Running " + passList.len + " passwords against target..." + c.ennd)
+    batchSize = 10000
+
+    i = 0
+    gco.rootShell = null
+    while i < passList.len and not gco.rootShell
+		print(c.grey + "[DEBUG] i = " + i + " batchsize = " + batchSize + " passlist = " + passList.len + c.ennd)
+        batch = passList[i : i + batchSize]
+        object.launch(writePath + "/ar", batch.join(" "))
+        i = i + batchSize
+    end while
+	
+    binFile.delete
+
+    if gco.rootShell then
+        globals.object = gco.rootShell
+        globals.remotePath = "/"
+        gco.rootShell = null
+        print(char(10) + c.purple + "<b>autoroot: root shell obtained" + c.ennd)
+        GETPERMS(globals.object)
+    else
+        globals.pipeFailed = true
+        print(c.yellow + "<b>autoroot: failed" + c.ennd)
+    end if
+end function
+
+// -- AutorootStack ------------------------------------------------
+// Runs autoroot against every shell on the objectStack,
+// replacing each entry with a root shell on success.
+astack = function(libArg)
+    if libArg == null then libArg = "init.so"
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>autoroot --stack: stack is empty" + c.ennd)
+        return
+    end if
+
+    shells = []
+    indices = []
+    i = 0
+    while i < objectStack.len
+        if typeof(objectStack[i]) == "shell" then
+            shells.push(objectStack[i])
+            indices.push(i)
+        end if
+        i = i + 1
+    end while
+
+    if shells.len == 0 then
+        print(c.yellow + "<b>autoroot --stack: no shell objects on stack" + c.ennd)
+        return
+    end if
+
+    savedObject = globals.object
+    rootCount = 0
+    failCount = 0
+    print(c.cyan + "<b>astack: escalating " + shells.len + " shell(s)..." + c.ennd)
+    div
+
+    i = 0
+    for sh in shells
+        rcomp = sh.host_computer
+        print(c.orange + "<b>[" + (i+1) + "/" + shells.len + "] " + rcomp.public_ip + "  lan:" + rcomp.local_ip + c.ennd)
+        if IsRoot(sh) then
+            print(c.lime + "  already root — planting..." + c.ennd)
+            rootCount = rootCount + 1
+            srcPath = "/root/InsecureLibs/" + libArg
+            if not myComp.File(srcPath) then srcPath = "/root/InsecureLibs/init.so"
+            if myComp.File(srcPath) then
+                r1 = myShell.scp(srcPath, "/lib", sh)
+                if typeof(r1) != "string" or r1 == "" then
+                    print(c.lime + "  [+] planted init.so" + c.ennd)
+                end if
+            end if
+            mxSrc = "/lib/metaxploit.so"
+            if myComp.File(mxSrc) then
+                r2 = myShell.scp(mxSrc, "/lib", sh)
+                if typeof(r2) != "string" or r2 == "" then
+                    print(c.lime + "  [+] planted metaxploit.so" + c.ennd)
+                end if
+            end if
+            i = i + 1
+            continue
+        end if
+        globals.object = sh
+        globals.pipeFailed = false
+        ar(null, null, null)
+        if not globals.pipeFailed then
+            objectStack[indices[i]] = globals.object
+            rootCount = rootCount + 1
+            // plant lib + metaxploit now we have root
+            srcPath = "/root/InsecureLibs/" + libArg
+            if not myComp.File(srcPath) then srcPath = "/root/InsecureLibs/init.so"
+            if myComp.File(srcPath) then
+                r1 = myShell.scp(srcPath, "/lib", globals.object)
+                if typeof(r1) != "string" or r1 == "" then
+                    print(c.lime + "  [+] planted init.so" + c.ennd)
+                end if
+            end if
+            mxSrc = "/root/metaxploit.so"
+            if myComp.File(mxSrc) then
+                r2 = myShell.scp(mxSrc, "/lib", globals.object)
+                if typeof(r2) != "string" or r2 == "" then
+                    print(c.lime + "  [+] planted metaxploit.so" + c.ennd)
+                end if
+            end if
+        else
+            globals.pipeFailed = false
+            failCount = failCount + 1
+        end if
+        div
+        i = i + 1
+    end for
+
+    globals.object = savedObject
+    globals.pipeFailed = false
+    print(c.cyan + "<b>autoroot --stack complete" + c.ennd)
+    print(c.grey + "  escalated: " + rootCount + "  failed: " + failCount + c.ennd)
+end function
+
+// ── RGrep ────────────────────────────────────────────────────────
+// Search file contents recursively for a pattern
+RGrep = function(pattern, path, obj)
+    comp = null
+    if typeof(obj) == "shell" then comp = obj.host_computer
+    if typeof(obj) == "computer" then comp = obj
+    if not comp then
+        print(c.yellow + "<b>rgrep: no target" + c.ennd)
+        return null
+    end if
+    if not path or path == "" then path = "/"
+    root = comp.File(path)
+    if not root then
+        print(c.yellow + "<b>rgrep: path not found: " + path + c.ennd)
+        return null
+    end if
+    matchedLines = []
+    queue = []
+    if root.is_folder then
+        queue = root.get_files + root.get_folders
+    else
+        queue = [root]
+    end if
+    while queue.len > 0
+        f = queue.pull
+        if not f then continue
+        if f.is_folder then
+            queue = queue + f.get_files + f.get_folders
+            continue
+        end if
+        if not f.has_permission("r") then continue
+        content = f.get_content
+        if not content or content == "" then continue
+        lines = content.split(char(10))
+        ln = 1
+        for line in lines
+            if line.indexOf(pattern) != null then
+                print(c.gold + f.path + c.ennd + c.grey + ":" + ln + c.ennd + "  " + line)
+                matchedLines.push(line)
+            end if
+            ln = ln + 1
+        end for
+    end while
+    return matchedLines
+end function
+
+// ── RFind ────────────────────────────────────────────────────────
+// Find files/folders by name pattern recursively
+RFind = function(pattern, path, obj, matchList = null)
+    comp = null
+    if typeof(obj) == "shell" then comp = obj.host_computer
+    if typeof(obj) == "computer" then comp = obj
+    if not comp then
+        print(c.yellow + "<b>rfind: no target" + c.ennd)
+        return 0
+    end if
+    if not path or path == "" then path = "/"
+    root = comp.File(path)
+    if not root then
+        print(c.yellow + "<b>rfind: path not found: " + path + c.ennd)
+        return 0
+    end if
+    found = 0
+    queue = [root]
+    while queue.len > 0
+        f = queue.pull
+        if not f then continue
+        if f.name.indexOf(pattern) != null then
+            icon = ""
+            if f.is_folder then icon = "/"
+            print(c.gold + f.path + icon + c.ennd)
+            found = found + 1
+            if matchList != null then matchList.push(f.path)
+        end if
+        if f.is_folder then
+            queue = queue + f.get_files + f.get_folders
+        end if
+    end while
+    return found
+end function
+
+// -- Nslookup -------------------------------------------------------
+Nslookup = function(params)
+    if params.len < 1 then
+        print(c.red + "Invalid Address")
+        return null
+    end if
+    result = nslookup(params[0])
+    if result == null or result == "" then
+        print(c.red + "Lookup failed for " + params[0])
+        return null
+    end if
+    print(c.gold + result)
+    return result
+end function
+
+
+// ── stacklan ─────────────────────────────────────────────────────
+// stacklan <lanip>        switch to the stack object with that LAN ip
+// stacklan <pubip> -p     match public ip instead (first hit)
+// stacklan                list every stack object's pub/lan ip
+CmdStacklan = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>stacklan: stack is empty" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    // no arg: just list them
+    if inp.len < 2 then
+        i = 1
+        for obj in objectStack
+            comp = obj
+            if typeof(obj) == "shell" then comp = obj.host_computer
+            if typeof(comp) == "computer" then
+                print(c.grey + "  [" + i + "] " + c.ennd + c.white + comp.local_ip + c.ennd + c.grey + "  pub:" + comp.public_ip + "  (" + typeof(obj) + ")" + c.ennd)
+            end if
+            i = i + 1
+        end for
+        return
+    end if
+
+    target  = inp[1]
+    usePub  = inp.indexOf("-p") != null
+    found   = null
+    foundIx = 0
+
+    i = 1
+    for obj in objectStack
+        comp = obj
+        if typeof(obj) == "shell" then comp = obj.host_computer
+        if typeof(comp) == "computer" then
+            ip = comp.local_ip
+            if usePub then ip = comp.public_ip
+            if ip == target then
+                found   = obj
+                foundIx = i
+                break
+            end if
+        end if
+        i = i + 1
+    end for
+
+    if found == null then
+        print(c.yellow + "<b>stacklan: no stack object with ip " + target + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    globals.object = found
+    comp = found
+    if typeof(found) == "shell" then comp = found.host_computer
+    print(c.green + "stacklan: [" + foundIx + "] " + comp.local_ip + "  pub:" + comp.public_ip + " (" + typeof(found) + ")" + c.ennd)
+    globals.pipeResult = comp.local_ip
+    GETPERMS(globals.object)
+end function
+CommandTable["stacklan"] = @CmdStacklan
