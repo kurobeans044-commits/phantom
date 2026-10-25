@@ -1,0 +1,282 @@
+// wsx.src  |  wstack bounce helper  |  runs ON target router
+// Build: build /root/ai/tp/wsx.src /root/ai/tp
+//
+// Discovers the LAN itself (get_router + devices_lan_ip, recursive,
+// no gap-filling — see WStack's own comment on why gap-filling is too
+// costly for a command that overflow()s every entry) instead of
+// requiring the caller to separately write/build/launch a whole other
+// enum_lan.src round trip first. Used to be two nested launches per
+// wstack call (enumerate, then bounce); now it's one. gco.wsIPs is
+// still honored as an explicit override if a caller ever sets it, but
+// WStack (hack.src) no longer does — self-discovery replaced it.
+//
+// gco.edb (optional) — db.txt-known mem/val pairs, same shortcut
+// slb.src/libscan.src already get. Checked first for whichever lib
+// ends up loaded (custom or default) before falling back to either
+// the hardcoded weaklib signature or a full scan/decode.
+//
+// gco.wsUseLib / gco.wsUseMx (optional, live handles) — if the caller
+// is already holding a loaded lib/metaxploit (loadlib/claim -lib,
+// claim -mx), it hands the ACTUAL objects across instead of just a
+// name, so this scans/bounces with YOUR OWN loaded copies instead of
+// reloading fresh via this machine's own metaxploit.so/lib — same
+// technique uselib already uses (mx = metaxploit; if
+// globals.activeMx then mx = globals.activeMx). Confirmed live handles
+// survive an object.launch() boundary via gco (payloads/test_libsurvival_*),
+// so this is safe. Takes priority over gco.wsLib (a name) and the
+// init.so/libhttp.so default.
+//
+// Default libs (init.so/libhttp.so) — no live handle or name given:
+// tries db-known pairs first, then the known-good hardcoded exploit
+// signature (0x1F8F7708/dexer, 0x1F000FB5/length fallback) — this
+// hardcoded fallback is default-only, not used for a live handle or a
+// named lib.
+//
+// Custom lib (wstack [libname] / wstack -l [libname]) — tries
+// db-known pairs first, then scans for real if none exist/pan out
+// (mx.scan/scan_address, same decode logic slb.src uses).
+//
+// Either way, the winning mem/val gets bounced at each discovered
+// LAN ip via overflow's 3rd arg — never net_use()-ing the target
+// directly.
+
+gco = get_custom_object
+
+// clear stale results up front — every exit path below (missing
+// metaxploit, missing weaklib, missing wsIPs) must leave this run's
+// outcome unambiguous rather than a leftover object list from a
+// previous run. Previously this only worked because the caller
+// happened to reset these before every launch — not self-defending.
+gco.wsObjects = []
+gco.wsCount   = 0
+gco.wsResults = null
+gco.wsLibName = ""
+gco.wsLibVer  = ""
+// exposes the loaded lib itself (live handle), same as libscan.src's
+// gco.lsLibObj — lets WStack (hack.src) drop it straight into
+// globals.activeLib regardless of whether any device actually got hit
+gco.wsLibObj  = null
+// caller polls this instead of a fixed wait() — same pattern
+// LibScan/ScanLanBounce already use, lets it stop the instant this
+// actually finishes instead of always burning a flat delay regardless
+// of how many devices/candidates there were to get through
+gco.wsDone    = false
+
+// confirmed: /lib/metaxploit.so is NOT reliably present on target
+// machines — the caller uploads a copy alongside the binary, so
+// check there first. Still needed as the scan/decode engine even when
+// a live lib handle is provided, unless a live mx was provided too.
+metaxploit = include_lib(program_path.split("/")[:-1].join("/") + "/metaxploit.so")
+if not metaxploit then metaxploit = include_lib("/lib/metaxploit.so")
+if not metaxploit then
+    gco.wsDebug = "no metaxploit"
+    gco.wsDone = true
+    exit
+end if
+
+mx = metaxploit
+if gco.hasIndex("wsUseMx") and gco.wsUseMx then mx = gco.wsUseMx
+
+// self-discover the LAN from wherever this script is actually running
+// (this machine, since the caller launched it here) — gco.wsIPs stays
+// as an explicit override if a caller ever provides one
+ips = []
+if gco.hasIndex("wsIPs") and gco.wsIPs then
+    ips = gco.wsIPs.split(",")
+else
+    deviceList = []
+    getDevices = function(router)
+        if router == null then return
+        ip = router.local_ip
+        if deviceList.indexOf(ip) == null then deviceList.push(ip)
+        devices = router.devices_lan_ip
+        if not devices then return
+        for device in devices
+            if device == ip then continue
+            if deviceList.indexOf(device) != null then continue
+            subRouter = get_router(device)
+            subSwitch = get_switch(device)
+            if subRouter then
+                deviceList.push(device)
+                getDevices(subRouter)
+            else if subSwitch then
+                deviceList.push(device)
+                getDevices(subSwitch)
+            else
+                deviceList.push(device)
+            end if
+        end for
+    end function
+    router = get_router
+    if router then getDevices(router)
+    myLanIp = get_shell.host_computer.local_ip
+    for ip in deviceList
+        if ip != myLanIp then ips.push(ip)
+    end for
+end if
+
+if ips.len == 0 then
+    gco.wsDebug = "no LAN devices found"
+    gco.wsDone = true
+    exit
+end if
+objs = []
+allResults = []
+
+// mirrors ops.src's GetUserCtx — can't call it directly, this is a
+// standalone script with its own scope, no access to phantom's helpers
+GetUserCtx = function(obj)
+    if typeof(obj) != "shell" and typeof(obj) != "computer" then return ""
+    rhost = obj
+    if typeof(obj) == "shell" then rhost = obj.host_computer
+    f = rhost.File("/etc/passwd")
+    if not f then return ""
+    if f.has_permission("w") then return "root" else return "guest"
+end function
+
+KnownPairsFor = function(libName, libVer)
+    out = []
+    if gco.hasIndex("edb") and gco.edb then
+        for e in gco.edb
+            exVer = ""
+            if e.hasIndex("ver") then exVer = e["ver"]
+            if e["lib"] == libName and exVer == libVer then
+                out.push([e["mem"], e["val"]])
+            end if
+        end for
+    end if
+    return out
+end function
+
+// resolve which lib to use, in priority order: a live handle handed
+// in directly > a named lib loaded fresh from this machine > the
+// init.so/libhttp.so default. useDefaultFallback stays true only for
+// the true default case — a live handle or an explicitly named lib
+// skips the two hardcoded signature guesses.
+ml = null
+useDefaultFallback = false
+if gco.hasIndex("wsUseLib") and gco.wsUseLib then
+    ml = gco.wsUseLib
+    gco.wsDebug = "using caller's own lib: " + ml.lib_name + " " + ml.version
+else if gco.hasIndex("wsLib") and gco.wsLib != "" then
+    ml = mx.load("/lib/" + gco.wsLib)
+    if not ml then ml = mx.load(gco.wsLib)
+    if not ml then
+        gco.wsDebug = "lib not found: " + gco.wsLib
+        gco.wsDone = true
+        exit
+    end if
+else
+    ml = mx.load("/lib/init.so")
+    if ml == null then ml = mx.load("/lib/libhttp.so")
+    if not ml then
+        gco.wsDebug = "no weaklib found"
+        gco.wsDone = true
+        exit
+    end if
+    useDefaultFallback = true
+end if
+
+gco.wsLibObj  = ml
+gco.wsLibName = ml.lib_name
+gco.wsLibVer  = ml.version
+
+knownPairs = KnownPairsFor(ml.lib_name, ml.version)
+candidates = []
+for pair in knownPairs
+    candidates.push({"mem": pair[0], "val": pair[1]})
+end for
+
+// no known db entries — scan for real instead, using a live mx if the
+// caller handed one in, same reasoning as the lib itself above
+if candidates.len == 0 then
+    mems = mx.scan(ml)
+    if mems then
+        for mem in mems
+            raw = mx.scan_address(ml, mem)
+            addrs = raw.split("Unsafe check: ")
+            for addr in addrs
+                if addr == addrs[0] then continue
+                p1 = addr.indexOf("<b>")
+                p2 = addr.indexOf("</b>")
+                if p1 == null or p2 == null then continue
+                val = addr[p1+3:p2]
+                if val == "" then continue
+                candidates.push({"mem": mem, "val": val})
+            end for
+        end for
+    end if
+end if
+
+if candidates.len == 0 and not useDefaultFallback then
+    gco.wsDebug = "no candidates on " + ml.lib_name + " " + ml.version
+    gco.wsDone = true
+    exit
+end if
+
+// off by default — set by wstackall (via gco.wsIncludeGuest) to keep
+// guest-level shell/computer bounces instead of requiring root
+includeGuest = gco.hasIndex("wsIncludeGuest") and gco.wsIncludeGuest
+
+gco.wsDebug = "scanning " + ips.len + " ip(s) with " + candidates.len + " candidate(s) on " + ml.lib_name + "..."
+for lanIp in ips
+    obj = null
+    // try every candidate instead of stopping at the first success —
+    // different mem/val pairs on the same lib can land different
+    // privilege levels, so a guest-only hit gets discarded and the
+    // loop keeps trying the rest in case a later one lands root
+    for cand in candidates
+        candObj = ml.overflow(cand.mem, cand.val, lanIp)
+        t = typeof(candObj)
+        allResults.push(lanIp + char(3) + cand.mem + char(3) + cand.val + char(3) + t)
+        if includeGuest and (t == "computer" or t == "shell") then
+            obj = candObj
+            break
+        else if t == "computer" and GetUserCtx(candObj) == "root" then
+            obj = candObj
+            break
+        end if
+    end for
+    // default-only last resort: the two known-good hardcoded
+    // signatures, same as before — never used for a live handle or a
+    // named lib, only the generic init.so/libhttp.so fallback
+    if not obj and useDefaultFallback then
+        candObj = ml.overflow("0x1F8F7708", "dexer", lanIp)
+        t = typeof(candObj)
+        allResults.push(lanIp + char(3) + "0x1F8F7708" + char(3) + "dexer" + char(3) + t)
+        if includeGuest and (t == "computer" or t == "shell") then
+            obj = candObj
+        else if t == "computer" and GetUserCtx(candObj) == "root" then
+            obj = candObj
+        end if
+        if not obj then
+            candObj = ml.overflow("0x1F000FB5", "length", lanIp)
+            t = typeof(candObj)
+            allResults.push(lanIp + char(3) + "0x1F000FB5" + char(3) + "length" + char(3) + t)
+            if includeGuest and (t == "computer" or t == "shell") then
+                obj = candObj
+            else if t == "computer" and GetUserCtx(candObj) == "root" then
+                obj = candObj
+            end if
+        end if
+    end if
+    // computer AND root only — a LAN bounce overflow isn't supposed to
+    // hand back a login shell, and a guest-level computer isn't what
+    // "root computer bounce" is asking for either (unless includeGuest
+    // opted into keeping those footholds anyway)
+    if obj then
+        objs.push(obj)
+        ctxLabel = "root computer"
+        if GetUserCtx(obj) != "root" then ctxLabel = typeof(obj) + " (guest)"
+        gco.wsDebug = gco.wsDebug + " | got " + ctxLabel + " on " + lanIp
+    end if
+end for
+
+gco.wsObjects  = objs
+gco.wsCount    = objs.len
+gco.wsResults  = allResults.join(char(2))
+// how many devices actually got tried — the caller no longer
+// enumerates the LAN itself, so it has no other way to report this
+gco.wsIPsCount = ips.len
+gco.wsDebug    = gco.wsDebug + " — done: " + objs.len + " found"
+gco.wsDone     = true
