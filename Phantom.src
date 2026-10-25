@@ -1,0 +1,800 @@
+// ================================================================
+//  ENTRY POINT
+// ================================================================
+c = {}
+c.red    = "<color=#CC2222>"       // crimson
+c.orange = "<color=#D4621A>"       // burnt sienna
+c.yellow = "<color=#D4A017>"       // ochre
+c.green  = "<color=#4A7C59>"       // sage green
+c.cyan   = "<color=#2E86AB>"       // cerulean
+c.blue   = "<color=#1B3A8C>"       // cobalt blue
+c.purple = "<color=#4B0082>"       // indigo
+c.white  = "<color=#FFFFF0>"       // ivory
+c.grey   = "<color=#708090>"       // slate grey
+c.gold   = "<color=#FFB300>"       // amber
+c.lime   = "<color=#4CBB17>"       // viridian green
+c.pink   = "<color=#FF4081>"       // magenta
+c.teal   = "<color=#008080>"       // teal
+c.rust   = "<color=#B7410E>"       // rust
+c.copper = "<color=#B87333>"       // copper
+c.ennd   = "</color>"
+
+globals.currentPath = program_path.split("/")[:-1].join("/")
+currentPath = globals.currentPath
+gco = get_custom_object
+
+metaxploit = include_lib(currentPath + "/metaxploit.so")
+if not metaxploit then metaxploit = include_lib("/lib/metaxploit.so")
+if not metaxploit then return( "<color=orange><b>phantom: metaxploit.so missing" + c.ennd)
+
+// additive only — the plain `metaxploit` global above stays, since
+// ~25+ call sites across hack.src/remote.src/macro.src/ops.src
+// reference it directly by that name. This just mirrors gco.crypto for
+// consistency / in case future code wants a gco-visible copy.
+gco.metaxploit = metaxploit
+
+
+gco.crypto = include_lib("/lib/crypto.so")
+if not gco.crypto then gco.crypto = include_lib(currentPath + "/crypto.so")
+if not gco.crypto then print(c.yellow + "<b>phantom: crypto.so missing" + c.ennd)
+
+// CommandTable must exist before any topic module below is imported —
+// each module registers its own commands (CommandTable["name"] = @CmdFoo)
+// right after its function definition, 5hell-style, instead of listing
+// them in a separate manifest.
+CommandTable = {}
+
+import_code("/root/ai/pt/macro.src")
+import_code("/root/ai/pt/hack.src")
+import_code("/root/ai/pt/ops.src")
+import_code("/root/ai/pt/remote.src")
+import_code("/root/ai/pt/chainsaw.src")
+import_code("/root/ai/pt/stack.src")
+import_code("/root/ai/pt/game.src")
+import_code("/root/ai/pt/rt.src")
+
+myShell      = get_shell
+myComp       = myShell.host_computer
+myPath       = currentPath
+remotePath   = "/"
+object       = null
+lObject      = null
+activeLib    = null
+activeMx     = null
+
+// gco.local carries activeLib/activeMx (live handles — confirmed via
+// payloads/test_libsurvival_* to survive an object.launch() boundary,
+// contrary to the old "tried three times, failed" assumption) across a
+// jump so a nested phantom instance picks up whatever lib/mx you had
+// loaded instead of starting blank. Not object/remotePath — those are
+// this session's position, meaningless to a fresh session on a new
+// machine.
+if gco.hasIndex("local") and gco.local then
+    loc = gco.local
+    if loc.hasIndex("activeLib") and loc.activeLib then
+        activeLib = loc.activeLib
+        print(c.grey + "  gco.local: restored activeLib " + activeLib.lib_name + " " + activeLib.version + c.ennd)
+    end if
+    if loc.hasIndex("activeMx") and loc.activeMx then
+        activeMx = loc.activeMx
+        print(c.grey + "  gco.local: restored activeMx" + c.ennd)
+    end if
+    gco.local = null
+end if
+
+publicTarget = ""
+localTarget  = ""
+bounceTarget = ""
+objectStack  = []
+
+// auto-create db.txt if missing
+if not gco.hasIndex("macroCallStack") then
+    gco.macroCallStack = []
+end if
+
+// auto-load exploit db if it exists
+globals.edb = []
+
+    dbFile = myComp.File(currentPath + "/db.txt")
+	if not dbFile then
+		myComp.touch(currentPath, "db.txt")
+		dbFile = myComp.File(currentPath + "/db.txt")
+		else
+		if dbFile == null or not dbFile then
+		print(char(9) + char(10) + "<color=red><size=125%>Missing db.txt, make it in /root/ai/tp and then try again")
+		return
+end if
+end if
+if dbFile and typeof(dbFile) == "file" then
+    content = dbFile.get_content
+    if content and content != "" then
+        for line in content.split(char(10))
+            if line == "" then continue
+            line = line.replace(char(13), "")
+            if line == "" then continue
+            p1 = line.indexOf("|")
+            if p1 == null then continue
+            p2 = line.indexOf("|", p1 + 1)
+            if p2 == null then continue
+            p3 = line.indexOf("|", p2 + 1)
+            entry = {}
+            if p3 != null then
+                p4 = line.indexOf("|", p3 + 1)
+                entry["lib"] = line[:p1]
+                entry["ver"] = line[p1+1:p2]
+                entry["mem"] = line[p2+1:p3]
+                if p4 != null then
+                    p5 = line.indexOf("|", p4 + 1)
+                    if p5 != null then
+                        entry["val"] = line[p3+1:p4]
+                        entry["type"] = line[p4+1:p5]
+                        entry["user"] = line[p5+1:]
+                    else
+                        entry["val"] = line[p3+1:p4]
+                        entry["type"] = line[p4+1:]
+                        entry["user"] = ""
+                    end if
+                else
+                    entry["val"] = line[p3+1:]
+                    entry["type"] = ""
+                    entry["user"] = ""
+                end if
+            else
+                entry["lib"] = line[:p1]
+                entry["ver"] = ""
+                entry["mem"] = line[p1+1:p2]
+                entry["val"] = line[p2+1:]
+                entry["type"] = ""
+                entry["user"] = ""
+            end if
+            if entry["lib"] == "" or entry["mem"] == "" or entry["val"] == "" then continue
+            globals.edb.push(entry)
+        end for
+        print(c.grey + "edb: loaded " + globals.edb.len + " exploit(s) from db.txt" + c.ennd)
+    end if
+end if
+
+// auto-load dead-lib list if it exists (libs previously scanned with
+// zero exploitable vulnerabilities — see DeadLibAdd/IsDeadLib in hack.src)
+globals.deadLibs = []
+deadFile = myComp.File(currentPath + "/deadlibs.txt")
+if deadFile and typeof(deadFile) == "file" then
+    deadContent = deadFile.get_content
+    if deadContent and deadContent != "" then
+        for line in deadContent.split(char(10))
+            if line == "" then continue
+            line = line.replace(char(13), "")
+            if line == "" then continue
+            dp1 = line.indexOf("|")
+            if dp1 == null then continue
+            globals.deadLibs.push({"lib": line[:dp1], "ver": line[dp1+1:]})
+        end for
+        print(c.grey + "deadlibs: loaded " + globals.deadLibs.len + " known-dead lib(s)" + c.ennd)
+    end if
+end if
+
+// Shell.launch(path, argsString) hands the launched script's `params`
+// argsString as a SINGLE element — NOT split by space the way directly-
+// typed CLI args are (confirmed: jump --loadlib was landing in the
+// normal interactive prompt instead of exiting headlessly, because
+// params[0] == "--loadlib" never matched a combined "--loadlib name"
+// string). Parsed defensively below so both headless modes work
+// whether params arrived pre-split (typed directly: phantom --rshell
+// 1222) or as one joined string (launched via jump: comp.launch(
+// remoteBin, "--rshell 1222")).
+headlessCmd = ""
+headlessArg = ""
+if params.len >= 1 then
+    p0Parts = params[0].split(" ")
+    headlessCmd = p0Parts[0]
+    if p0Parts.len >= 2 then
+        headlessArg = p0Parts[1:].join(" ")
+    else if params.len >= 2 then
+        headlessArg = params[1]
+    end if
+end if
+
+// -- headless mode: phantom --rshell [port]
+if headlessCmd == "--rshell" then
+    port = 1222
+    if headlessArg != "" then port = headlessArg.to_int
+    rshelld = include_lib("/InsecureLibs/librshell.so")
+    if not rshelld then rshelld = include_lib(currentPath + "/librshell.so")
+    if not rshelld then rshelld = include_lib("/root/ai/rsh/librshell.so")
+    if not rshelld then exit("phantom --rshell: librshell.so not found")
+    output = rshelld.install_service
+    if output != true then exit("phantom --rshell: install_service failed: " + output)
+    // rshelld installs to /server
+    svc = myComp.File("/server/rshelld")
+    if svc then
+        myShell.launch("/server/rshelld", "start")
+    else
+        svc = myComp.File("/etc/init.d/rshelld")
+        if svc then myShell.launch("/etc/init.d/rshelld", "start")
+    end if
+    exit("phantom: rshelld started on port " + port)
+end if
+
+// -- headless mode: phantom --loadlib <name> — loads a lib from THIS
+// machine's own /lib into globals.activeLib, hands it to gco.local
+// (same as quit/exit does) so Propagate can pick it back up the
+// instant comp.launch() returns, then exits immediately — no
+// interactive prompt at all. Lets jump/jumpbin pass this as a launch
+// arg so "jump --loadlib X |> uselib ..." grabs a lib that lives on
+// the REMOTE machine's own /lib and brings it straight home in one
+// shot, with nothing to type by hand on the target end.
+if headlessCmd == "--loadlib" and headlessArg != "" then
+    libName = headlessArg
+    if not metaxploit then exit("phantom --loadlib: metaxploit.so not available on target")
+    ml = metaxploit.load("/lib/" + libName)
+    if not ml then ml = metaxploit.load(libName)
+    if not ml then exit("phantom --loadlib: not found: " + libName)
+    gco.local = {"activeLib": ml, "activeMx": globals.activeMx}
+    exit("phantom --loadlib: loaded " + ml.lib_name + " " + ml.version)
+end if
+
+Title
+print(c.grey + "type " + c.white + "<b>help</b>" + c.grey + " for commands.  ./ launches local binary.  r./ launches remote." + c.ennd + char(10))
+gco.metaxploit
+if gco.metaxploit then print("<color=green>[i] Metaxploit has been loaded into GCO")
+if not gco.metaxploit then return print("<color=red>Metaxploit NOT loaded into GCO")
+ChainSaw.load
+pipeQueue = []
+pipeResult = ""
+pipeObjResult = null
+pipeVars = {}
+pipeFailed = false
+foreachBody = ""
+foreachItems = []
+macroQueue   = []
+macroName    = ""
+macroArgList = []
+// mac trace <name> — when true, the macro line-dispatch loop below
+// prints each raw compiled line right before running it (see the
+// macroQueue branch further down, and CheckMacroComplete which clears
+// this back to false once the macro finishes)
+macroTrace   = false
+stageQueue   = []
+stackforItems  = []
+stackforBody   = ""
+stackforSaved  = null
+// side-channel for macro "for @x in @objclip ... endfor" — can't encode
+// live objects into the __for__ line's own text the way string items
+// get comma-joined back in, so the remaining items ride here instead
+// between __forobj__ pops (see HandleForObjLine, macro.src)
+macroForObjItems = []
+macroForObjBody  = ""
+macroForObjVar   = ""
+macroInTry     = false
+macroCatchVar  = ""
+macroCatchBody = ""
+throwMessage   = ""
+// load persisted clips from gco into pipeVars
+gco = get_custom_object
+if not gco.hasIndex("clips") then gco.clips = {}
+for k in gco.clips.indexes
+    pipeVars[k] = gco.clips[k]
+end for
+// load persisted aliases
+if not gco.hasIndex("aliases") then gco.aliases = {}
+aliases = {}
+aliasFile = currentPath + "/aliases.txt"
+aliasFileObj = myComp.File(aliasFile)
+if aliasFileObj then
+    content = aliasFileObj.get_content
+    if content and content != "" then
+        for line in content.split(char(10))
+            line = line.replace(char(13), "")
+            if line == "" then continue
+            eqIdx = line.indexOf("=")
+            if eqIdx == null then continue
+            k = line[:eqIdx]
+            v = line[eqIdx+1:]
+            aliases[k] = v
+            gco.aliases[k] = v
+        end for
+    end if
+end if
+if aliases.len > 0 then
+    print(c.grey + "aliases: loaded " + aliases.len + " alias(es)" + c.ennd)
+end if
+
+// load optional plugin modules — /root/ai/pt/modules/*.cfg each name a
+// pre-compiled binary that gets launch()'d instead of import_code'd
+// (import_code can't take a computed path, so this is the workaround —
+// same gco launch-boundary carry the jump/loadlib flow already relies
+// on). A module's binary is expected to write gco.modules[module_name]
+// = {"commands": {...}, [optional init fn name]: @Fn} before it exits.
+// Purely optional — silently does nothing if modules/ doesn't exist.
+modulesDir = currentPath + "/modules"
+modulesFolder = myComp.File(modulesDir)
+if modulesFolder and modulesFolder.is_folder then
+    if not gco.hasIndex("modules") then gco.modules = {}
+    modLoaded = 0
+    modTried  = 0
+    for cfgFile in modulesFolder.get_files
+        if cfgFile.name.len <= 4 or cfgFile.name[cfgFile.name.len-4:] != ".cfg" then continue
+        modTried = modTried + 1
+        cfgContent = cfgFile.get_content
+        if not cfgContent or cfgContent == "" then
+            print(c.yellow + "modules: " + cfgFile.name + " is empty, skipping" + c.ennd)
+            continue
+        end if
+        modCfg = {}
+        for cfgLine in cfgContent.split(char(10))
+            cfgLine = cfgLine.replace(char(13), "")
+            if cfgLine == "" then continue
+            cfgEq = cfgLine.indexOf("=")
+            if cfgEq == null then continue
+            modCfg[cfgLine[:cfgEq]] = cfgLine[cfgEq+1:]
+        end for
+        if not modCfg.hasIndex("module_name") or modCfg.module_name == "" then
+            print(c.yellow + "modules: " + cfgFile.name + " missing module_name, skipping" + c.ennd)
+            continue
+        end if
+        modName = modCfg.module_name
+        if not modCfg.hasIndex("binary_path") or modCfg.binary_path == "" then
+            print(c.yellow + "modules: " + modName + " missing binary_path, skipping" + c.ennd)
+            continue
+        end if
+        modBin = myComp.File(modCfg.binary_path)
+        if not modBin or not modBin.is_binary then
+            print(c.yellow + "modules: " + modName + " binary not found/not compiled at " + modCfg.binary_path + c.ennd)
+            continue
+        end if
+        modArgs = ""
+        if modCfg.hasIndex("load_args") then modArgs = modCfg.load_args
+
+        gco.modules[modName] = null
+        myShell.launch(modBin.path, modArgs)
+        modTable = gco.modules[modName]
+        if not modTable then
+            print(c.yellow + "modules: " + modName + " produced no output — did it write gco.modules['" + modName + "']?" + c.ennd)
+            continue
+        end if
+
+        if modCfg.hasIndex("init") and modCfg.init != "" and modTable.hasIndex(modCfg.init) then
+            modInitResult = modTable[modCfg.init]
+            if typeof(modInitResult) == "string" then
+                print(c.yellow + "modules: " + modName + " init failed: " + modInitResult + c.ennd)
+                continue
+            end if
+        end if
+
+        modCmdCount = 0
+        if modTable.hasIndex("commands") then
+            for modCmdName in modTable.commands.indexes
+                if CommandTable.hasIndex(modCmdName) then
+                    print(c.yellow + "modules: '" + modName + "' command '" + modCmdName + "' collides with an existing command — skipped" + c.ennd)
+                    continue
+                end if
+                CommandTable[modCmdName] = modTable.commands[modCmdName]
+                modCmdCount = modCmdCount + 1
+            end for
+        end if
+
+        print(c.lime + "modules: loaded '" + modName + "'" + c.grey + "  (" + modCmdCount + " command(s))" + c.ennd)
+        modLoaded = modLoaded + 1
+    end for
+    if modTried > 0 then
+        print(c.grey + "modules: " + modLoaded + "/" + modTried + " loaded from " + modulesDir + c.ennd)
+    end if
+end if
+
+while true
+
+    // sync gco.clips -> pipeVars so lanenum/ipenum results are always available
+    gcoSync = get_custom_object
+    if gcoSync.hasIndex("clips") then
+        for ck in gcoSync.clips.indexes
+            pipeVars[ck] = gcoSync.clips[ck]
+        end for
+    end if
+
+    // -- foreach iterator -----------------------------------------
+    if foreachItems.len > 0 and pipeQueue.len == 0 then
+        pipeFailed = false
+        item = foreachItems[0]
+        foreachItems = foreachItems[1:]
+        pipeVars["each"] = item
+        globals.pipeVars["each"] = item
+        pipeQueue.push(foreachBody)
+        print(c.orange + "foreach -> @each = " + item + " (" + (foreachItems.len) + " remaining)" + c.ennd)
+    else if foreachItems.len == 0 and foreachBody != "" and pipeQueue.len == 0 then
+        print(c.cyan + "<b>foreach complete" + c.ennd)
+        foreachBody = ""
+    end if
+
+    // -- stackfor iterator -------------------------------------------
+    if stackforItems.len > 0 and pipeQueue.len == 0 then
+        globals.object = stackforItems[0]
+        stackforItems = stackforItems[1:]
+        pipeQueue.push(stackforBody)
+        if typeof(globals.object) == "shell" then
+            print(c.orange + "stackfor -> " + globals.object.host_computer.public_ip + " (" + stackforItems.len + " remaining)" + c.ennd)
+        else if typeof(globals.object) == "computer" then
+            print(c.orange + "stackfor -> " + globals.object.public_ip + " (" + stackforItems.len + " remaining)" + c.ennd)
+        end if
+    else if stackforItems.len == 0 and stackforBody != "" and pipeQueue.len == 0 then
+        globals.object = stackforSaved
+        stackforSaved = null
+        stackforBody = ""
+        print(c.cyan + "<b>stackfor complete" + c.ennd)
+    end if
+
+    // macro completion: fire only when queue fully drained
+    CheckMacroComplete
+
+    if pipeQueue.len > 0 then
+        if pipeFailed then
+            print(c.yellow + "  pipeline aborted (" + pipeQueue.len + " cmd(s) skipped)" + c.ennd)
+            pipeQueue = []
+            // inside a macro: keep pipeFailed so the loop handler can skip to next iteration
+            // at the prompt: reset it
+            if macroName == "" then pipeFailed = false
+            continue
+        end if
+        tokens = pipeQueue[0].split(" ")
+        i = 0
+        while i < tokens.len
+            // @o [key] — raw gco lookup (any top-level custom_object
+            // index, not just gco.clips like plain @varname below).
+            // Matches 5hell's cob-token convention: @o myx0 == the
+            // value at gco.myx0. Collapses both tokens into one.
+            // Guarded against "|"/"|>" as the next token — a multi-
+            // stage pipe (a | b | c) only gets its first "|" split out
+            // before this runs, so the second one can still be sitting
+            // unsplit right after @o here; treating it as a lookup key
+            // produced a confusing false "@o: key not found: |" alarm
+            // instead of just leaving it for the pipe/stage splitter
+            // that runs later.
+            if tokens[i] == "@o" and i + 1 < tokens.len and tokens[i+1] != "|" and tokens[i+1] != "|>" then
+                key = tokens[i+1]
+                if gco.hasIndex(key) then
+                    tokens[i+1] = gco[key]
+                    tokens.remove(i)
+                else
+                    print(c.yellow + "<b>@o: key not found: " + key + c.ennd)
+                end if
+            else if tokens[i].len > 1 and tokens[i][0:1] == "@" then
+                tok = tokens[i][1:]
+                dotLen = tok.indexOf(".len")
+                if dotLen != null and dotLen == tok.len - 4 then
+                    vn = tok[0:dotLen]
+                    val = ""
+                    if pipeVars.hasIndex(vn) then val = pipeVars[vn]
+                    if val.indexOf(",") != null then
+                        tokens[i] = "" + val.split(",").len
+                    else if val == "" then
+                        tokens[i] = "0"
+                    else
+                        tokens[i] = "" + val.len
+                    end if
+                else if pipeVars.hasIndex(tok) and not (tokens[0] == "clip") then
+                    tokens[i] = pipeVars[tok]
+                end if
+            end if
+            i = i + 1
+        end while
+        inp = tokens
+        pipeQueue = pipeQueue[1:]
+    else if macroQueue.len > 0 and foreachBody == "" then
+        if pipeFailed then
+            HandleMacroPipeFail
+            continue
+        end if
+        line = macroQueue[0]
+        macroQueue = macroQueue[1:]
+
+        if macroTrace then print(c.teal + "  trace: " + line + c.ennd)
+
+        line = line.split(char(9)).join(" ")
+        parts = []
+        for p in line.split(" ")
+            if p != "" then parts.push(p)
+        end for
+        if parts.len == 0 or parts[0][0:2] == "//" then continue
+        // ── macro runtime token handlers ───────────────────────────
+        if line.len >= 8 and line[:8] == "__menu__" then
+            HandleMenuLine(line)
+            continue
+        else if line.len >= 9 and line[:9] == "__while__" then
+            HandleWhileLine(line)
+            continue
+        else if line.len >= 6 and line[:6] == "__if__" then
+            HandleIfLine(line)
+            continue
+        else if line.len >= 7 and line[:7] == "__try__" then
+            HandleTryLine(line)
+            continue
+        else if line.len >= 9 and line[:9] == "__catch__" then
+            HandleCatchLine(line)
+            continue
+        else if line == "__tryend__" then
+            HandleTryendLine()
+            continue
+        else if line.len >= 10 and line[:10] == "__switch__" then
+            HandleSwitchLine(line)
+            continue
+        else if line.len >= 7 and line[:7] == "__for__" then
+            HandleForLine(line)
+            continue
+        else if line == "__forobj__" then
+            HandleForObjLine()
+            continue
+        else if line == "__forend__" then
+            // pure no-op during normal execution — exists only as a
+            // failure-recovery anchor for HandleMacroPipeFail on a
+            // for-loop's last item (see HandleForLine, macro.src)
+            continue
+        else if line == "__funcend__" then
+            HandleFuncend()
+            continue
+        else if line == "__clearfail__" then
+            globals.pipeFailed = false
+            continue
+        end if
+        inp = parts
+    else if stageQueue.len > 0 and pipeQueue.len == 0 and foreachItems.len == 0 and foreachBody == "" and macroQueue.len == 0 then
+        // stage queue: run next stage regardless of pipeFailed
+        pipeFailed = false
+        line = stageQueue[0]
+        stageQueue = stageQueue[1:]
+        parts = []
+        for p in line.split(" ")
+            if p != "" then parts.push(p)
+        end for
+        if parts.len == 0 then continue
+        print(c.teal + "|> " + line + c.ennd)
+        inp = parts
+        // handle nested |> within this stage
+        si = inp.indexOf("|>")
+        if si != null then
+            stageQueue = [inp[si+1:].join(" ")] + stageQueue
+            inp = inp[:si]
+        end if
+    else
+        print(char(10))
+        if publicTarget != "" then print(c.gold  + "public  target: " + publicTarget + c.ennd)
+        if localTarget  != "" then print(c.gold  + "local   target: " + localTarget  + c.ennd)
+        if bounceTarget != "" then print(c.gold  + "bounce  target: " + bounceTarget + c.ennd)
+        if lObject and typeof(lObject) == "shell" then
+            myShell = lObject
+            myComp  = lObject.host_computer
+            print(c.white + "<b>local shell: " + lObject.host_computer.get_name + c.ennd)
+        end if
+        if lObject and typeof(lObject) == "computer" then
+            myComp = lObject
+            print(c.white + "<b>local computer: " + lObject.get_name + c.ennd)
+        end if
+        if object and typeof(object) == "shell" then
+            print(c.orange + "<b>remote shell: " + c.yellow + object.host_computer.get_name + "  pub:" + object.host_computer.public_ip + "  lan:" + object.host_computer.local_ip + c.ennd)
+            print(c.orange + "remote path: " + c.yellow + remotePath + c.ennd)
+        end if
+        if object and typeof(object) == "computer" then
+            print(c.orange + "<b>remote computer: " + c.yellow + object.get_name + "  pub:" + object.public_ip + "  lan:" + object.local_ip + c.ennd)
+        end if
+        if object and typeof(object) == "file" then
+            print(c.orange + "<b>remote file: " + c.yellow + object.name + c.ennd)
+        end if
+
+        inp = user_input(c.cyan + "<b>" + active_user + c.ennd + c.grey + "@" + c.ennd + c.gold + myPath + c.ennd + c.white + " $ </b>" + c.ennd, false, false, true).split(" ")
+        pipeFailed = false
+    end if
+
+    // ── if conditional preprocessing ──────────────────────────────
+    if inp.len >= 3 and inp[0] == "if" then
+        // find separator: prefer 'then', fall back to first '|'
+        thenIdx = inp.indexOf("then")
+        if thenIdx == null then
+            thenIdx = inp.indexOf("|")
+        end if
+        if thenIdx == null or thenIdx < 2 then
+            print(c.yellow + "<b>if: syntax: if <cond> then <cmd>  or  if <cond> | <cmd>" + c.ennd)
+            print(c.grey + "  e.g.  if @a | scan @a 0" + c.ennd)
+            continue
+        end if
+        condTokens = inp[1:thenIdx]
+        cmdTokens  = inp[thenIdx+1:]
+        if cmdTokens.len == 0 then
+            print(c.yellow + "<b>if: missing command after separator" + c.ennd)
+            continue
+        end if
+        // allow 'clip @a' as condition shorthand for '@a'
+        if condTokens.len == 2 and condTokens[0] == "clip" then
+            condTokens = [condTokens[1]]
+        else if condTokens.len == 3 and condTokens[0] == "not" and condTokens[1] == "clip" then
+            condTokens = ["not", condTokens[2]]
+        end if
+        if EvalCondition(condTokens) then
+            inp = cmdTokens
+            // fall through to stage/pipe detection and dispatch
+        else
+            continue  // condition false — skip
+        end if
+    end if
+
+    // stage/pipe detection — skip for 'if' lines (the if handler finds its own | or then)
+    if inp[0] != "if" then
+        stageIdx = inp.indexOf("|>")
+        if stageIdx != null then
+            stageQueue.push(inp[stageIdx+1:].join(" "))
+            inp = inp[:stageIdx]
+        end if
+
+        pipeIdx = inp.indexOf("|")
+        if pipeIdx != null then
+            pipeQueue.push(inp[pipeIdx+1:].join(" "))
+            inp = inp[:pipeIdx]
+        end if
+    end if
+
+    if inp.len == 0 or inp[0] == "" then continue
+
+    // substitute @varname tokens; detect trailing @varname as store target
+    storeVar = null
+    i = 0
+    while i < inp.len
+        // @o [key] — raw gco lookup (any top-level custom_object index,
+        // not just gco.clips like plain @varname below). Matches
+        // 5hell's cob-token convention: @o myx0 == the value at
+        // gco.myx0. Collapses both tokens into one.
+        // Guarded against "|"/"|>" as the next token — see the
+        // matching pipeQueue-branch comment above for why.
+        if inp[i] == "@o" and i + 1 < inp.len and inp[i+1] != "|" and inp[i+1] != "|>" then
+            key = inp[i+1]
+            if gco.hasIndex(key) then
+                inp[i+1] = gco[key]
+                inp.remove(i)
+            else
+                print(c.yellow + "<b>@o: key not found: " + key + c.ennd)
+            end if
+        else if inp[i] == "@lan" then
+            // currently held object's LAN ip — e.g. uselib -l @lan inside
+            // a macro instead of manually ifconfig-ing + clipping it first
+            lanIp = ""
+            if typeof(object) == "shell" then lanIp = object.host_computer.local_ip
+            if typeof(object) == "computer" then lanIp = object.local_ip
+            if lanIp == "" then
+                print(c.yellow + "<b>@lan: not holding a remote shell/computer" + c.ennd)
+            else
+                inp[i] = lanIp
+            end if
+        else if inp[i].len > 1 and inp[i][0:1] == "@" then
+            tok = inp[i][1:]
+            dotLen = tok.indexOf(".len")
+            if dotLen != null and dotLen == tok.len - 4 then
+                vn = tok[0:dotLen]
+                val = ""
+                if pipeVars.hasIndex(vn) then val = pipeVars[vn]
+                if val.indexOf(",") != null then
+                    inp[i] = "" + val.split(",").len
+                else if val == "" then
+                    inp[i] = "0"
+                else
+                    inp[i] = "" + val.len
+                end if
+            else
+                vn = tok
+                if pipeVars.hasIndex(vn) and not (inp[0] == "clip") then
+                    inp[i] = pipeVars[vn]
+                else if i == inp.len - 1 and inp[0] != "clip" and inp[0] != "foreach" then
+                    storeVar = vn
+                    inp = inp[:-1]
+                end if
+            end if
+        end if
+        i = i + 1
+    end while
+	funcCallIdx = 0
+	while funcCallIdx < inp.len
+    if inp[funcCallIdx].len > 6 and inp[funcCallIdx][0:7] == "$(call " then
+        // Extract call from $(call macro arg1 arg2 ...)
+        callStr = inp[funcCallIdx][7:]  // remove "$(call "
+        if callStr[-1] == ")" then
+            callStr = callStr[:-1]  // remove trailing )
+        end if
+        
+        callParts = callStr.split(" ")
+        if callParts.len >= 1 then
+            macroName = callParts[0]
+            macroArgs = callParts[1:]
+            callResult = MacroCall(macroName, macroArgs)
+            if callResult != null then
+                inp[funcCallIdx] = callResult
+            else
+                inp[funcCallIdx] = ""
+            end if
+        end if
+    end if
+    funcCallIdx = funcCallIdx + 1
+	end while
+    if inp.len == 0 then continue
+
+    cmd = inp[0]
+
+    // ── alias expansion ───────────────────────────────────────────
+    if aliases.hasIndex(cmd) then
+        expanded = aliases[cmd].split(" ")
+        // append any extra args the user typed after the alias
+        if inp.len > 1 then expanded = expanded + inp[1:]
+        inp = expanded
+        cmd = inp[0]
+    end if
+
+    // ================================================================
+    //  DISPATCH — everything below replaces the old if/else if chain.
+    //  "./" and "r./" are prefix matches on the binary path itself,
+    //  so they're checked before the CommandTable lookup. Every other
+    //  command is a plain key in CommandTable, self-registered right next
+    //  to its CmdFoo definition in whichever topic file owns it (ops.src,
+    //  hack.src, remote.src, stack.src, macro.src, chainsaw.src) —
+    //  adding a command is a one-file edit, 5hell-style.
+    // ================================================================
+    if cmd.len >= 2 and cmd[:2] == "./" then
+        f = GetFile(cmd[2:], myComp, true)
+        if not f then
+            print(c.yellow + "<b>./: not found: " + cmd[2:] + c.ennd)
+        else if not f.is_binary then
+            print(c.yellow + "<b>./: not a binary" + c.ennd)
+        else if inp.len > 1 then
+            myShell.launch(f.path, inp[1:].join(" "))
+        else
+            myShell.launch(f.path)
+        end if
+
+    else if cmd.len >= 3 and cmd[:3] == "r./" then
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>r./: not holding remote shell" + c.ennd)
+        else
+            rcomp = object.host_computer
+            bname = cmd[3:]
+            f = null
+            if bname.len > 0 and bname[0] == "/" then
+                f = rcomp.File(bname)
+            else
+                searchPaths = [remotePath, "/root", "/home/guest", "/bin", "/usr/bin"]
+                for sp in searchPaths
+                    candidate = rcomp.File(sp + "/" + bname)
+                    if candidate then
+                        f = candidate
+                        break
+                    end if
+                end for
+            end if
+            if not f then
+                print(c.yellow + "<b>r./: not found: " + bname + c.ennd)
+            else if not f.is_binary then
+                print(c.yellow + "<b>r./: not a binary: " + f.path + c.ennd)
+            else if inp.len > 1 then
+                object.launch(f.path, inp[1:].join(" "))
+            else
+                object.launch(f.path)
+            end if
+        end if
+
+    else if CommandTable.hasIndex(cmd) then
+        CommandTable[cmd](inp)
+
+    else
+        // check inline macro funcs defined with func/endfunc
+        gcoD = get_custom_object
+        if gcoD.hasIndex("macroFuncs") and gcoD.macroFuncs.hasIndex(cmd) then
+            fn = gcoD.macroFuncs[cmd]
+            compiled = CompileMacroLines(fn["rawLines"], inp[1:], false)
+            globals.macroQueue = compiled + ["__funcend__"] + globals.macroQueue
+            if macroName == "" then globals.macroName = cmd
+        else
+            print(c.yellow + "<b>phantom: " + cmd + ": command not found" + c.ennd)
+        end if
+    end if
+
+    if storeVar != null and pipeResult != "" then
+        pipeVars[storeVar] = pipeResult
+        pipeResult = ""
+    end if
+
+    // batched db.txt write — see EdbAdd's comment in hack.src. Once per
+    // command instead of once per new exploit candidate found.
+    FlushEdb()
+end while
