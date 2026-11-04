@@ -60,10 +60,9 @@ Cover = function()
     print(c.orange + "Running cover..." + c.ennd)
 
     // 1. corrupt remote system.log
-    ans = ""
-    while ans != "y" and ans != "n"
-        ans = user_input(c.yellow + "Corrupt remote system.log? (y/n): " + c.ennd)
-    end while
+    ans = "y"
+	if ans == "n" then ans = "n"
+
     if ans == "y" then
         test = comp.touch("/home/guest", "system.log")
         if test != false then
@@ -93,12 +92,13 @@ Cover = function()
         f = comp.File(path)
         if f then
             f.delete
+			print(" ")
             print(c.green + "  [+] deleted: " + path + c.ennd)
         end if
     end for
 
     // wipe rt folders
-    rtPaths = ["/home/guest/rt", "/tmp/rt", "/root/rt"]
+    rtPaths = ["/home/guest/rt", "/tmp/rt", "/root/rt", "/home/guest/chainsaw_rce.src", "/home/guest/chainsaw_rce"]
     for path in rtPaths
         d = comp.File(path)
         if d then
@@ -109,15 +109,16 @@ Cover = function()
                 end for
             end if
             d.delete
+			print(" ")
             print(c.green + "  [+] deleted: " + path + c.ennd)
         end if
     end for
 
     // 3. corrupt local system.log
     ans2 = ""
-    while ans2 != "y" and ans2 != "n"
+    if ans2 != "y" and ans2 == "n" then
         ans2 = user_input(c.yellow + "Corrupt LOCAL system.log? (y/n): " + c.ennd)
-    end while
+    end if
     if ans2 == "y" then
         test = myComp.touch("/home/guest", "system.log")
         if test != false then
@@ -126,11 +127,16 @@ Cover = function()
                 res = f.move("/var", "system.log")
                 if res != "permission denied" then
                     lf = myComp.File("/var/system.log")
-                    if lf and not lf.is_binary then
+                    if lf then
                         lf.set_owner("root")
                         lf.set_group("root")
                         lf.chmod("o-w")
+						lf.chmod("o-r")
+						lf.chmod("o-x")
                         lf.chmod("g-w")
+						lf.chmod("g-x")
+						lf.chmod("g-r")
+						print(" ")
                         print(c.green + "  [+] local system.log corrupted" + c.ennd)
                     end if
                 end if
@@ -363,6 +369,7 @@ RShell = function(args)
             sf.delete
             return
         end if
+		myShell.scp("/lib/metaxploit.so", "/lib", object)
         object.launch("/home/guest/rsi")
         sf.delete
         bf.delete
@@ -1074,10 +1081,132 @@ WiFiCrack = function()
 end function
 
 // ── EdbSave helper ───────────────────────────────────────────────
+// ── per-lib exploit db (split files) ─────────────────────────────
+// db.txt is replaced by one file per lib under a db/ subfolder:
+// libssh.so -> db/ssh.txt, libhttp.so -> db/http.txt, etc. The lib
+// name is stored in every line, so loading just reads every file in
+// db/ and parses lines the same way — which file a row came from
+// doesn't matter. Legacy db.txt is still read once (migration) and
+// then blanked by the next save.
+LibFileName = function(libName)
+    base = libName
+    if base.len > 3 and base[:3] == "lib" then base = base[3:]
+    dotso = base.indexOf(".so")
+    if dotso != null then base = base[:dotso]
+    clean = ""
+    safe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+    for ch in base
+        if safe.indexOf(ch) != null then clean = clean + ch
+    end for
+    if clean == "" then clean = "misc"
+    return clean + ".txt"
+end function
+
+// parse one db line (lib|ver|mem|val|type|user, with older 5/4/3-field
+// rows still readable) into an entry map, or null if unusable
+ParseEdbLine = function(line)
+    if line == "" then return null
+    line = line.replace(char(13), "")
+    if line == "" then return null
+    p1 = line.indexOf("|")
+    if p1 == null then return null
+    p2 = line.indexOf("|", p1 + 1)
+    if p2 == null then return null
+    p3 = line.indexOf("|", p2 + 1)
+    entry = {}
+    if p3 != null then
+        p4 = line.indexOf("|", p3 + 1)
+        entry["lib"] = line[:p1]
+        entry["ver"] = line[p1+1:p2]
+        entry["mem"] = line[p2+1:p3]
+        if p4 != null then
+            p5 = line.indexOf("|", p4 + 1)
+            if p5 != null then
+                entry["val"] = line[p3+1:p4]
+                entry["type"] = line[p4+1:p5]
+                entry["user"] = line[p5+1:]
+            else
+                entry["val"] = line[p3+1:p4]
+                entry["type"] = line[p4+1:]
+                entry["user"] = ""
+            end if
+        else
+            entry["val"] = line[p3+1:]
+            entry["type"] = ""
+            entry["user"] = ""
+        end if
+    else
+        entry["lib"] = line[:p1]
+        entry["ver"] = ""
+        entry["mem"] = line[p1+1:p2]
+        entry["val"] = line[p2+1:]
+        entry["type"] = ""
+        entry["user"] = ""
+    end if
+    if entry["lib"] == "" or entry["mem"] == "" or entry["val"] == "" then return null
+    return entry
+end function
+
+// push an entry only if lib+ver+mem+val isn't already in globals.edb
+EdbPushUnique = function(entry)
+    if globals.edb == null then globals.edb = []
+    enVer = ""
+    if entry.hasIndex("ver") then enVer = entry["ver"]
+    for ex in globals.edb
+        exVer = ""
+        if ex.hasIndex("ver") then exVer = ex["ver"]
+        if ex["lib"] == entry["lib"] and exVer == enVer and ex["mem"] == entry["mem"] and ex["val"] == entry["val"] then return false
+    end for
+    globals.edb.push(entry)
+    return true
+end function
+
+// read legacy db.txt (migration) + every per-lib file in db/ into
+// globals.edb, deduped. returns how many new entries were added.
+EdbLoadAll = function(comp, basePath)
+    if globals.edb == null then globals.edb = []
+    loaded = 0
+    legacy = comp.File(basePath + "/db.txt")
+    if legacy and typeof(legacy) == "file" then
+        lc = legacy.get_content
+        if lc and lc != "" then
+            for line in lc.split(char(10))
+                entry = ParseEdbLine(line)
+                if entry != null and EdbPushUnique(entry) then loaded = loaded + 1
+            end for
+        end if
+    end if
+    dbFolder = comp.File(basePath + "/db")
+    if dbFolder and dbFolder.is_folder then
+        for lf in dbFolder.get_files
+            fc = lf.get_content
+            if not fc or fc == "" then continue
+            for line in fc.split(char(10))
+                entry = ParseEdbLine(line)
+                if entry != null and EdbPushUnique(entry) then loaded = loaded + 1
+            end for
+        end for
+    end if
+    return loaded
+end function
+
 EdbSave = function()
     if globals.edb == null then return
     if globals.edb.len == 0 then return
-    out = ""
+    savePath = globals.currentPath
+    if not savePath or savePath == "" then
+        print(c.yellow + "edb: globals.currentPath not set — cannot save" + c.ennd)
+        return
+    end if
+    comp = get_shell.host_computer
+    dbDir = savePath + "/db"
+    if not comp.File(dbDir) then comp.create_folder(savePath, "db")
+    if not comp.File(dbDir) then
+        print(c.yellow + "edb: could not create " + dbDir + c.ennd)
+        return
+    end if
+    // group entries by their per-lib file name
+    groups = {}
     for e in globals.edb
         ver = ""
         if e.hasIndex("ver") then ver = e["ver"]
@@ -1085,29 +1214,54 @@ EdbSave = function()
         if e.hasIndex("type") then objType = e["type"]
         userCtx = ""
         if e.hasIndex("user") then userCtx = e["user"]
-        out = out + e["lib"] + "|" + ver + "|" + e["mem"] + "|" + e["val"] + "|" + objType + "|" + userCtx + char(10)
-    end for
-    savePath = globals.currentPath
-    if not savePath or savePath == "" then
-        print(c.yellow + "edb: globals.currentPath not set — cannot save" + c.ennd)
-        return
-    end if
-    comp = get_shell.host_computer
-    f = comp.File(savePath + "/db.txt")
-    if not f then
-        comp.touch(savePath, "db.txt")
-        f = comp.File(savePath + "/db.txt")
-    end if
-    if f and typeof(f) == "file" then
-        wr = f.set_content(out)
-        if typeof(wr) == "string" and wr != "" then
-            print(c.yellow + "edb: save error: " + wr + c.ennd)
+        fname = LibFileName(e["lib"])
+        rec = e["lib"] + "|" + ver + "|" + e["mem"] + "|" + e["val"] + "|" + objType + "|" + userCtx + char(10)
+        if groups.hasIndex(fname) then
+            groups[fname] = groups[fname] + rec
+        else
+            groups[fname] = rec
         end if
-    else
-        print(c.yellow + "edb: could not open " + savePath + "/db.txt for writing" + c.ennd)
+    end for
+    for fname in groups.indexes
+        f = comp.File(dbDir + "/" + fname)
+        if not f then
+            comp.touch(dbDir, fname)
+            f = comp.File(dbDir + "/" + fname)
+        end if
+        if f and typeof(f) == "file" then
+            wr = f.set_content(groups[fname])
+            if typeof(wr) == "string" and wr != "" then
+                print(c.yellow + "edb: save error (" + fname + "): " + wr + c.ennd)
+            end if
+        else
+            print(c.yellow + "edb: could not open " + dbDir + "/" + fname + c.ennd)
+        end if
+    end for
+    // keep the full db.txt as the master file too — grab, scan and wsx
+    // still read it straight from disk, so db/ is an ADDITIONAL per-lib
+    // view, not a replacement. blanking it would starve those readers.
+    allOut = ""
+    for e in globals.edb
+        ver = ""
+        if e.hasIndex("ver") then ver = e["ver"]
+        objType = ""
+        if e.hasIndex("type") then objType = e["type"]
+        userCtx = ""
+        if e.hasIndex("user") then userCtx = e["user"]
+        allOut = allOut + e["lib"] + "|" + ver + "|" + e["mem"] + "|" + e["val"] + "|" + objType + "|" + userCtx + char(10)
+    end for
+    mf = comp.File(savePath + "/db.txt")
+    if not mf then
+        comp.touch(savePath, "db.txt")
+        mf = comp.File(savePath + "/db.txt")
+    end if
+    if mf and typeof(mf) == "file" then
+        wr2 = mf.set_content(allOut)
+        if typeof(wr2) == "string" and wr2 != "" then
+            print(c.yellow + "edb: db.txt save error: " + wr2 + c.ennd)
+        end if
     end if
 end function
-
 // ── DeadLib helpers ──────────────────────────────────────────────
 // Persists which lib+version combos are known to have zero
 // exploitable vulnerabilities (patched, or a scan found nothing) so
@@ -1179,6 +1333,10 @@ end function
 // updatelib's recon-only scan).
 EdbAdd = function(libName, libVer, memAddr, valStr, objType="", userCtx="")
     if not libName or libName == "" or not memAddr or memAddr == "" or not valStr or valStr == "" then return
+    // track the most-recently-recorded lib so `report` (no args) targets
+    // the lib you just scanned/grabbed, not whatever edb[-1] happens to be
+    gco.lastScanLib = libName
+    gco.lastScanVer = libVer
     if globals.edb == null then globals.edb = []
     for ex in globals.edb
         exVer = ""
@@ -1293,68 +1451,11 @@ ExploitDB = function(args)
         return
     end if
 
-    // edb load — read from disk
+    // edb load — read from disk (db/ split files + legacy db.txt)
     if cmd == "load" then
-        f = comp.File(dbPath)
-        if not f or typeof(f) != "file" then
-            print(c.yellow + "<b>edb: db.txt not found at " + dbPath + c.ennd)
-            return
-        end if
-        content = f.get_content
-        if not content or content == "" then
-            print(c.yellow + "<b>edb: db.txt is empty" + c.ennd)
-            return
-        end if
         globals.edb = []
-        loaded = 0
-        for line in content.split(char(10))
-            if line == "" then continue
-            line = line.replace(char(13), "")
-            if line == "" then continue
-            // split on first 5 pipes — 6-field (lib|ver|mem|val|type|user)
-            // is current, 5-field (no user), 4-field (no type/user), and
-            // 3-field (no ver/type/user) are older db.txt generations,
-            // all still readable
-            p1 = line.indexOf("|")
-            if p1 == null then continue
-            p2 = line.indexOf("|", p1 + 1)
-            if p2 == null then continue
-            p3 = line.indexOf("|", p2 + 1)
-            entry = {}
-            if p3 != null then
-                p4 = line.indexOf("|", p3 + 1)
-                entry["lib"] = line[:p1]
-                entry["ver"] = line[p1+1:p2]
-                entry["mem"] = line[p2+1:p3]
-                if p4 != null then
-                    p5 = line.indexOf("|", p4 + 1)
-                    if p5 != null then
-                        entry["val"] = line[p3+1:p4]
-                        entry["type"] = line[p4+1:p5]
-                        entry["user"] = line[p5+1:]
-                    else
-                        entry["val"] = line[p3+1:p4]
-                        entry["type"] = line[p4+1:]
-                        entry["user"] = ""
-                    end if
-                else
-                    entry["val"] = line[p3+1:]
-                    entry["type"] = ""
-                    entry["user"] = ""
-                end if
-            else
-                entry["lib"] = line[:p1]
-                entry["ver"] = ""
-                entry["mem"] = line[p1+1:p2]
-                entry["val"] = line[p2+1:]
-                entry["type"] = ""
-                entry["user"] = ""
-            end if
-            if entry["lib"] == "" or entry["mem"] == "" or entry["val"] == "" then continue
-            globals.edb.push(entry)
-            loaded = loaded + 1
-        end for
-        print(c.green + "edb: loaded " + loaded + " entries from db.txt" + c.ennd)
+        loaded = EdbLoadAll(comp, globals.currentPath)
+        print(c.green + "edb: loaded " + loaded + " entries (db/ + db.txt)" + c.ennd)
         return
     end if
 
@@ -1384,8 +1485,8 @@ ExploitDB = function(args)
     print(c.grey + "edb               list all entries" + c.ennd)
     print(c.grey + "edb add [lib] [mem] [val]   add entry" + c.ennd)
     print(c.grey + "edb use [#] [opt:lan-ip]    use exploit" + c.ennd)
-    print(c.grey + "edb save          write to db.txt" + c.ennd)
-    print(c.grey + "edb load          load from db.txt" + c.ennd)
+    print(c.grey + "edb save          write db.txt + db/<lib>.txt" + c.ennd)
+    print(c.grey + "edb load          load from db/ (+ legacy db.txt)" + c.ennd)
     print(c.grey + "edb del [#]       delete entry" + c.ennd)
     print(c.grey + "edb clear         clear all" + c.ennd)
 end function
@@ -1726,7 +1827,15 @@ WStack = function(inp, localMode, includeGuest=false)
                 continue
             end if
 
-            if not includeGuest and typeof(obj) != "computer" then continue
+            // was `typeof(obj) != "computer"`, which silently dropped EVERY
+            // shell — root shells included — while keeping guest-level
+            // computers. overflow lands a root result as either a shell OR
+            // a computer, so the filter has to be on actual privilege, not
+            // object type. GetUserCtx handles both types (ops.src).
+            if not includeGuest and GetUserCtx(obj) != "root" then
+                print(c.grey + "    guest-level on " + lanIp + " — skipped (wstackall keeps these)" + c.ennd)
+                continue
+            end if
             objectStack.push(obj)
             pushed = pushed + 1
             comp = obj
@@ -1834,7 +1943,7 @@ WStack = function(inp, localMode, includeGuest=false)
         for ip in gco.wbLanIps.split(",")
             if ip != lanIp and ip != "" then lanTargets.push(ip)
         end for
-        print(c.cyan + "  target sees " + lanTargets.len + " device(s): " + lanTargets.join(", ") + c.ennd)
+        print(c.pink + "  target sees " + lanTargets.len + " device(s): " + lanTargets.join(", ") + c.ennd)
     end if
 
     // fallback
@@ -1855,14 +1964,13 @@ WStack = function(inp, localMode, includeGuest=false)
         print(c.yellow + "<b>wstack: no other LAN devices" + c.ennd)
         return
     end if
-    print(c.cyan + "  found " + lanTargets.len + " target(s): " + lanTargets.join(", ") + c.ennd)
-
+    
     // upload prebuilt binary + metaxploit — writing/building the bounce
     // script ON the target (the old approach) didn't reliably share gco
     // with the caller (same issue enum_lan's wbLanIps silently has,
     // masked by its own fallback path). Precompiled + scp'd, same as
     // slb/netmap, is the pattern actually confirmed to work.
-    wsxBin = currentPath + "/wsx"
+    wsxBin = "/root/ai/tp/wsx"
     if not myComp.File(wsxBin) then
         print(c.yellow + "<b>wstack: wsx binary not found at " + wsxBin + c.ennd)
         print(c.grey + "  build it first: build /root/ai/tp/wsx.src /root/ai/tp" + c.ennd)
@@ -1871,7 +1979,7 @@ WStack = function(inp, localMode, includeGuest=false)
 
     print(c.orange + "Uploading tools..." + c.ennd)
     me = get_shell
-    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+    me.scp("/lib/metaxploit.so", "/home/guest", object)
     uploadResult = me.scp(wsxBin, "/home/guest", object)
     if typeof(uploadResult) == "string" and uploadResult != "" then
         print(c.yellow + "<b>wstack: upload failed: " + uploadResult + c.ennd)
@@ -2113,11 +2221,11 @@ LibScan = function(libName, lanIp, acceptComputer)
 
     mxf = rcomp.File("/home/guest/metaxploit.so")
     if not mxf then
-        myShell.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+        myShell.scp("/lib/metaxploit.so", "/home/guest", object)
         mxf = rcomp.File("/home/guest/metaxploit.so")
     end if
 
-    lsBin = currentPath + "/libscan"
+    lsBin = "/root/ai/tp/libscan"
     if not myComp.File(lsBin) then
         print(c.yellow + "<b>scanlib: libscan binary not found at " + lsBin + c.ennd)
         print(c.grey + "  build it first: build /root/ai/tp/libscan.src /root/ai/tp" + c.ennd)
@@ -2282,63 +2390,33 @@ Exploit = function(ip, port, acceptComputer)
         candidates.push({"mem": pair[0], "val": pair[1], "type": "", "user": ""})
     end for
 
-    dbFile = myComp.File(currentPath + "/db.txt")
-	if not dbFile then
-		myComp.touch(currentPath, "db.txt")
-		dbFile = myComp.File(currentPath + "/db.txt")
-		else
-		if dbFile == null or not dbFile then
-		print(char(9) + char(10) + "<color=red><size=125%>Missing db.txt, make it in /root/ai/tp and then try again")
-		return
-end if
-end if
-    if dbFile and typeof(dbFile) == "file" then
-        dbContent = dbFile.get_content
-        if dbContent and dbContent != "" then
-            for line in dbContent.split(char(10))
-                if line == "" then continue
-                line = line.replace(char(13), "")
-                p1 = line.indexOf("|")
-                if p1 == null then continue
-                p2 = line.indexOf("|", p1 + 1)
-                if p2 == null then continue
-                p3 = line.indexOf("|", p2 + 1)
-                if p3 == null then continue
-                if line[:p1] != cached.lib or line[p1+1:p2] != cached.ver then continue
-                p4 = line.indexOf("|", p3 + 1)
-                dbMem = line[p2+1:p3]
-                dbVal = ""
-                dbType = ""
-                dbUser = ""
-                if p4 != null then
-                    p5 = line.indexOf("|", p4 + 1)
-                    if p5 != null then
-                        dbVal = line[p3+1:p4]
-                        dbType = line[p4+1:p5]
-                        dbUser = line[p5+1:]
-                    else
-                        dbVal = line[p3+1:p4]
-                        dbType = line[p4+1:]
-                    end if
-                else
-                    dbVal = line[p3+1:]
-                end if
-                if dbMem == "" or dbVal == "" then continue
-                found = false
-                for cand in candidates
-                    if cand.mem == dbMem and cand.val == dbVal then
-                        found = true
-                        if dbType != "" then cand.type = dbType
-                        if dbUser != "" then cand.user = dbUser
-                        break
-                    end if
-                end for
-                if not found then
-                    candidates.push({"mem": dbMem, "val": dbVal, "type": dbType, "user": dbUser})
-                end if
-            end for
+    // merge in everything db already knows for this exact lib+version,
+    // straight from globals.edb (loaded at startup from db/ + db.txt) —
+    // no disk re-read, so it's independent of the per-lib file layout
+    for e in globals.edb
+        eVer = ""
+        if e.hasIndex("ver") then eVer = e["ver"]
+        if e["lib"] != cached.lib or eVer != cached.ver then continue
+        dbMem = e["mem"]
+        dbVal = e["val"]
+        dbType = ""
+        if e.hasIndex("type") then dbType = e["type"]
+        dbUser = ""
+        if e.hasIndex("user") then dbUser = e["user"]
+        if dbMem == "" or dbVal == "" then continue
+        found = false
+        for cand in candidates
+            if cand.mem == dbMem and cand.val == dbVal then
+                found = true
+                if dbType != "" then cand.type = dbType
+                if dbUser != "" then cand.user = dbUser
+                break
+            end if
+        end for
+        if not found then
+            candidates.push({"mem": dbMem, "val": dbVal, "type": dbType, "user": dbUser})
         end if
-    end if
+    end for
 
     print(c.cyan + "<b>exploit: " + candidates.len + " candidate(s) for " + ip + ":" + port + c.ennd)
     i = 1
@@ -2409,7 +2487,7 @@ QuickGrab = function(ip, port)
 //        globals.pipeFailed = true
   //      return
     //end if
-    portInt = port.to_int
+    
     //if typeof(portInt) != "number" then
       //  print(c.yellow + "<b>quickgrab: invalid port" + c.ennd)
         //globals.pipeFailed = true
@@ -2449,6 +2527,7 @@ QuickGrab = function(ip, port)
     print(c.grey + "  no edb match, running full scan..." + c.ennd)
     Scan(ip, port, myComp, null, null)
 end function
+
 
 // ── TargetInfo ──────────────────────────────────────────────────
 // Get detailed info on a target without attacking
@@ -2561,7 +2640,7 @@ ProxyWithChainSaw = function(hops)
 
         router = get_router(ip)
         if not router then
-			wait(1)
+			wait(0.1)
             clear_screen
 			wait(1)
             continue
@@ -2569,17 +2648,17 @@ ProxyWithChainSaw = function(hops)
 
         ns = metaxploit.net_use(ip, 0)
         if not ns then
-			wait(1)
+			wait(0.1)
             clear_screen
-			wait(1)
+			wait(0.1)
             continue
         end if
 
         ml = ns.dump_lib
         if not ml or ml.is_patched then
-			wait(1)
+			wait(0.1)
             clear_screen
-			wait(1)
+			wait(0.1)
             continue
         end if
 
@@ -2681,16 +2760,18 @@ ProxyWithChainSaw = function(hops)
     print(char(10) + c.orange + "Rooting final hop with ChainSaw..." + c.ennd)
     if typeof(final) == "shell" then
         ChainSaw.load
-        wait(1)
+        
 
         rcomp = final.host_computer
         rcePath = "/home/guest"
         rceName = "cs_rce"
 
         rceCode = "chainsaw = get_custom_object.chainsaw" + char(10)
+        rceCode = rceCode + "chainsaw.LogLevel = " + char(34) + "DEBUG" + char(34) + char(10)
         rceCode = rceCode + "chainsaw.load_samples" + char(10)
         rceCode = rceCode + "chainsaw.load_pregens" + char(10)
         rceCode = rceCode + "chainsaw.load_chains" + char(10)
+        rceCode = rceCode + "print(" + char(34) + "pregens=" + char(34) + " + chainsaw.pregens.len + " + char(34) + " chains=" + char(34) + " + chainsaw.chains.len)" + char(10)
         rceCode = rceCode + "chainsaw.crack(false)"
 
         rcomp.touch(rcePath, rceName + ".src")
@@ -2715,6 +2796,19 @@ ProxyWithChainSaw = function(hops)
                 end if
             end if
         end if
+	// ChainSaw fallback → ar. globals.object is the final hop (set above),
+    // or ChainSaw's root shell on success. ar() skips if already root,
+    // else uploads the ar binary and runs its local-root + dictionary
+    // attack on the held shell — a second crack path when ChainSaw misses.
+    if typeof(globals.object) == "shell" and not IsRoot(globals.object) then
+        print(char(10) + c.orange + "ChainSaw missed — falling back to ar (autoroot)..." + c.ennd)
+        ar(null, null, null)
+        if IsRoot(globals.object) then
+            print(c.lime + "<b>[+] FINAL HOP ROOTED via ar!" + c.ennd)
+        else
+            print(c.yellow + "<b>final hop still not root — ChainSaw and ar both missed" + c.ennd)
+        end if
+    end if
     end if
 
     print(c.green + "<b>Proxy is now active on final hop" + c.ennd)
@@ -2736,7 +2830,7 @@ ProxyWithChainSaw = function(hops)
 // db.txt.
 GetLogs = function(sitesPath, destFolder)
 Size = "<size=125%"
-print(c.copper + Size + "GetLog by: XANADU")
+print(c.copper + Size + "GetLogs by: XANADU")
 wait(2)
     sitesFile = GetFile(sitesPath, myComp, true)
     if not sitesFile then
@@ -3168,6 +3262,15 @@ CmdReport = function(inp)
     end for
 
     if args.len == 1 then
+        // prefer the lib most recently scanned/grabbed this session (set
+        // in EdbAdd) — survives other activity that would bump edb[-1]
+        if gco.hasIndex("lastScanLib") and gco.lastScanLib and gco.lastScanLib != "" then
+            lv = ""
+            if gco.hasIndex("lastScanVer") then lv = gco.lastScanVer
+            ReportFromMemory(gco.lastScanLib, lv, verbose)
+            return
+        end if
+        // fallback: the last entry loaded from db.txt
         if globals.edb == null or globals.edb.len == 0 then
             print(c.yellow + "<b>report: db.txt is empty — nothing to report on yet" + c.ennd)
             globals.pipeFailed = true
@@ -3370,25 +3473,75 @@ CmdCacheReset = function(inp)
 	if gco.metaxploit then print(char(10) + c.orange + "[i]" + c.lime + " GCO Has Been Reset")
 	gcoT = get_custom_object
 	if gcoT.hasIndex("treeResults") then
+		print(char(10) + char(9) + c.grey + "DEBUG: Stacktree.len --> " + gcoT.treeResults.len)
 		gcoT.treeResults = []
 		print(c.orange + "[i] " + c.lime + "gco.StackTree Reset")
-		print(char(10) + char(9) + c.grey + "DEBUG: Stacktree.len --> " + gcoT.treeResults.len)
+		
 	end if
 
-
+	
+	
     scanCount = 0
     if gco.hasIndex("scanLanResults") and gco.scanLanResults then 
 		scanCount = gco.scanLanResults.len
-		print(c.rust + scanCount.len)
+		print(c.rust + scanCount)
 	end if
 	
 	
     noteCount = 0
     if gco.hasIndex("reportNotes") and gco.reportNotes then noteCount = gco.reportNotes.len
+	print(c.green + "<b>cachereset: cleared " + scanCount + " scanlan cache entr(ies) and " + noteCount + " report note(s)" + c.ennd)
+	print(c.green + "<b>Active Lib cleared")
+	globals.activeLib = null
 
     gco.scanLanResults = {}
     gco.reportNotes = {}
+	globals.activeMx = null
+	// clear the most-recent-scanned lib tracker that `report` (no args)
+	// reads, so report doesn't point at a stale lib after a reset
+	gco.lastScanLib = null
+	gco.lastScanVer = null
 
-    print(c.green + "<b>cachereset: cleared " + scanCount + " scanlan cache entr(ies) and " + noteCount + " report note(s)" + c.ennd)
+
 end function
 CommandTable["reset"] = @CmdCacheReset
+
+
+glA = function(inp)
+	if globals.activeLib then
+		print(c.green + "	[i] Lib Loaded " + globals.activeLib.lib_name + " " + globals.activeLib.version)
+		else
+		print(c.red + "	[!] No Active Lib :(")
+		print(c.rust + "		[i] Try jump --loadlib [lib]")
+	end if
+	
+		
+end function
+CommandTable["gla"] = @glA
+
+gcoRT = function(inp)
+	if gco.hasIndex("rt") then
+		print(c.green + "	[i] rt loaded => " + gco.rt.len)
+		else
+		print(char(10) + c.red + "	[!] rt Tables Not Loaded")
+	end if
+end function
+CommandTable["rtdebug"] = @gcoRT
+
+gcoMx = function(inp)
+	if globals.activeMx then
+		print(c.green + "	[i] Lib Loaded " + globals.activeMx)
+		else
+		print(c.rust + "	[i] MX Not Loaded ")
+	end if
+end function
+CommandTable["glmx"] = @gcoMx
+
+ 
+
+
+
+
+
+
+
