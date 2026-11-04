@@ -78,6 +78,7 @@ if object == null then
 end if
 object.launch("/root/StudentsViewer.exe")
 end function
+CommandTable["st"] = @CmdStudent
 
 // jump [opt:--rshell] [opt:-b|--bin] [opt:--loadlib name]
 // -b/--bin: upload just the compiled phantom binary (+ the same
@@ -134,7 +135,7 @@ Title = function()
     print(b+"<b>  ██╔═══╝ ██╔══██║██╔══██║██║╚████║   ██║   ██║   ██║██║╚██╔╝██║"+c.ennd)
     print(a+"<b>  ██║     ██║  ██║██║  ██║██║ ╚███║   ██║   ╚██████╔╝██║ ╚═╝ ██║"+c.ennd)
     print(a+"<b>  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝"+c.ennd)
-    print(d+"                                              v1.8  by operator"+c.ennd)
+    print(d+"                                              v1.8  by KuroBeans"+c.ennd)
     print(char(10))
 end function
 
@@ -250,10 +251,10 @@ Propagate = function(rshellMode, binOnly, loadLibName=null)
     end if
 
     // ensure metaxploit.so sits alongside the deployed phantom
-    mxThere = rcomp.File(remoteFolder + "/metaxploit.so")
+    mxThere = rcomp.File("/home/guest/metaxploit.so")
     if not mxThere then
         print(c.orange + "Uploading metaxploit.so to deployed folder..." + c.ennd)
-        me.scp(currentPath + "/metaxploit.so", remoteFolder, comp)
+        me.scp("/lib/metaxploit.so", remoteFolder, comp)
     end if
     // also try /lib as a fallback location
     mxLib = rcomp.File("/lib/metaxploit.so")
@@ -264,7 +265,7 @@ Propagate = function(rshellMode, binOnly, loadLibName=null)
     // ensure librshell.so is in /lib on target (needed for rshelld) —
     // try currentPath then the lean rsh-only folder (jump --rshell's own
     // srcFolder above uses this same /root/ai/rsh location)
-    lrLib = rcomp.File("/lib/librshell.so")
+    lrLib = rcomp.File("/root/InsecureLibs/librshell.so")
     if not lrLib then
         lrSrc = myComp.File(currentPath + "/librshell.so")
         if not lrSrc then lrSrc = myComp.File("/root/ai/rsh/librshell.so")
@@ -274,10 +275,10 @@ Propagate = function(rshellMode, binOnly, loadLibName=null)
         end if
     end if
     // ensure crypto.so is alongside phantom
-    crThere = rcomp.File(remoteFolder + "/crypto.so")
+    crThere = rcomp.File("/lib/crypto.so")
     if not crThere then
-        cr = myComp.File(currentPath + "/crypto.so")
-        if cr then me.scp(currentPath + "/crypto.so", remoteFolder, comp)
+        cr = myComp.File("/root/InsecureLibs/crypto.so")
+        if cr then me.scp("/lib/crypto.so", remoteFolder, comp)
     end if
 
     // hand whatever lib/mx you're currently carrying to the nested
@@ -1166,7 +1167,7 @@ HackLan = function(lanIp)
     // jump — copy our metaxploit to target
     print(c.orange + "Jumping metaxploit to target..." + c.ennd)
     me = get_shell
-    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+    me.scp("/lib/metaxploit.so", "/home/guest", object)
     mxCheck = rcomp.File("/home/guest/metaxploit.so")
     if not mxCheck then
         print(c.yellow + "<b>hacklan: metaxploit upload failed" + c.ennd)
@@ -1345,6 +1346,7 @@ CmdRmv = function(inp)
         print(c.yellow + "<b>rmv: not holding remote object" + c.ennd)
     else if inp.len == 3 then
         Mv(inp[1], inp[2], object, false)
+		
     else
         print("<b>Usage: rmv [src] [dst]")
     end if
@@ -1523,8 +1525,8 @@ CommandTable["rterminal"] = @CmdRterminal
 
 // rwhoami — current user on the held remote shell (remote whoami)
 CmdRwhoami = function(inp)
-    if typeof(object) != "shell" then
-        print(c.yellow + "<b>rwhoami: not holding remote shell" + c.ennd)
+    if typeof(object) != "shell" or typeof(object) != "computer" then
+        print(c.yellow + "<b>rwhoami: not holding remote shell or Computer" + c.ennd)
         globals.pipeFailed = true
         return
     end if
@@ -1850,3 +1852,20 @@ CmdSsh = function(inp)
     end if
 end function
 CommandTable["ssh"] = @CmdSsh
+
+
+Rpwd = function(inp)
+if object == null then return print(c.red + "[!] No Remote Obj Held")
+rcomp = globals.remotePath
+print(c.lime + "Remote Path => " + rcomp)
+end function
+CommandTable["rpwd"] = @Rpwd
+
+z = function(inp)
+clear_screen
+Title()
+end function
+CommandTable["c"] = @z
+
+
+
