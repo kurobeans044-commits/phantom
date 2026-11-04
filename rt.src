@@ -339,13 +339,7 @@ end function
 CommandTable["buildrt"] = @CmdBuildrt
 //====================================================================================================================
 
-random = function(inp)
-happy = ["are you happy?", "no"]
-
-print(happy)
-
-end function
-CommandTable[happy] = @random
+ 
 
 
 
