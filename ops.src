@@ -230,15 +230,40 @@ CommandTable["randip"] = @CmdRandip
 
 CmdIpenum = function(inp)
     if inp.len < 2 then
-        print(c.yellow + "<b>usage: ipenum [port] [opt:@var]" + c.ennd)
-    else
-        sv = null
-        if inp.len >= 3 then
-            sv = inp[2]
-            if sv[0:1] == "@" then sv = sv[1:]
-        end if
-        IpEnum(inp[1], sv)
+        print("<b>Usage: ipenum [opt:iplist] <port> [port2 ...] [opt:-all]")
+        print(c.grey + "  randip 100 | ipenum 21               ips from the pipe, port 21" + c.ennd)
+        print(c.grey + "  randip 100 | ipenum @p 25 21         ips with 25 OR 21 open" + c.ennd)
+        print(c.grey + "  randip 100 | ipenum @p 25 21 -all    only ips with BOTH open" + c.ennd)
+        print(c.grey + "  -all  require EVERY listed port on the same ip (default: any one)" + c.ennd)
+        print(c.grey + "  trailing @var clips the survivors: ... | ipenum 21 @good" + c.ennd)
+        return
     end if
+
+    requireAll = inp.indexOf("-all") != null
+    // classify each arg instead of fixing it by position, so the ip list
+    // is optional: a token with a dot/comma is an ip list (usually a
+    // substituted @p), a leading @ is a store target, anything else is a
+    // port. Lets `ipenum 21` and `ipenum @p 25 21 -all` share one parser.
+    ipArg    = ""
+    storeVar = null
+    portList = []
+    for a in inp[1:]
+        if a == "" or a == "-all" then continue
+        if a[0] == "@" then
+            storeVar = a[1:]
+        else if a.indexOf(".") != null or a.indexOf(",") != null then
+            ipArg = a
+        else
+            portList.push(a)
+        end if
+    end for
+
+    if portList.len == 0 then
+        print(c.yellow + "<b>ipenum: no port given" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    IpEnum(portList, storeVar, ipArg, requireAll)
 end function
 CommandTable["ipenum"] = @CmdIpenum
 
@@ -558,7 +583,7 @@ end function
 CommandTable["ar"] = @CmdAr
 
 CmdAstack = function(inp)
-    libArg = "init.so"
+    libArg = "net.so"
     libIdx = inp.indexOf("--lib")
     if libIdx != null and libIdx < inp.len - 1 then
         libArg = inp[libIdx + 1]
@@ -709,11 +734,24 @@ CmdAutoroot = function(inp)
                     if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
                         globals.object = gcoCS.chainsaw.shell
                         globals.remotePath = "/"
+                        // sync objectStack — swap the stale guest entry for
+                        // this machine with the new root shell so `stack`
+                        // shows root, not guest
+                        nComp = globals.object.host_computer
+                        si2 = 0
+                        for ent in objectStack
+                            ecomp = ent
+                            if typeof(ent) == "shell" then ecomp = ent.host_computer
+                            if typeof(ecomp) == "computer" and ecomp.public_ip == nComp.public_ip and ecomp.local_ip == nComp.local_ip then
+                                objectStack[si2] = globals.object
+                            end if
+                            si2 = si2 + 1
+                        end for
                         print(c.green + "<b>[+] ROOTED via ChainSaw!" + c.ennd)
                         print(c.gold + "  password: " + gcoCS.chainsaw.password + c.ennd)
 
                         print(c.orange + "  planting weaklib..." + c.ennd)
-                        PlantToObject(["libhttp.so"], "/lib")
+                        PlantToObject(["libhttp.so", "net.so"], "/lib")
                     else
                         print(c.yellow + "  ChainSaw failed" + c.ennd)
                     end if
@@ -951,41 +989,75 @@ end function
 // -- IpEnum --------------------------------------------------------
 // Enumerates LAN from remote shell, filters by open port,
 // clips matching IPs to @var.
-// Usage: ipenum [port] @var
-IpEnum = function(port, storeVar)
-    portInt = port.to_int
-    if typeof(portInt) != "number" then
-        print(c.yellow + "<b>ipenum: invalid port" + c.ennd)
+// Usage: ipenum [opt:iplist] <port> [port2 ...] [opt:-all] [opt:@var]
+// portList: list of port strings (a bare string is accepted too, for any
+// older caller). requireAll: keep an ip only when EVERY listed port is
+// open on it, instead of any single one. ipArg: explicit comma ip list
+// (a substituted @p) which takes priority over the pipe.
+IpEnum = function(portList, storeVar, ipArg="", requireAll=false)
+    if typeof(portList) == "string" then portList = [portList]
+    if portList == null or portList.len == 0 then
+        print(c.yellow + "<b>ipenum: no port given" + c.ennd)
         globals.pipeFailed = true
         return
     end if
 
-    // if pipeResult has IPs (from randip N), scan those directly
-    if globals.pipeResult != "" and globals.pipeResult != null then
-        if portInt == 0 then
+    // validate and normalize every port up front, so a typo in the 2nd
+    // port fails before burning net_use calls on the 1st
+    ports = []
+    for p in portList
+        pi = p.to_int
+        if typeof(pi) != "number" then
+            print(c.yellow + "<b>ipenum: invalid port: " + p + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        if pi == 0 then
             print(c.yellow + "<b>ipenum: port 0 (router) exists on almost all IPs - try a specific port like 22, 80, 21" + c.ennd)
             globals.pipeFailed = true
             return
         end if
-        ipList = globals.pipeResult.split(",")
+        ports.push(pi)
+    end for
+    portLabel = portList.join(", ")
+    needLabel = "any of"
+    if requireAll then needLabel = "all of"
+
+    // explicit ip list wins over the pipe; otherwise take piped ips
+    // (from randip N / ports / another ipenum)
+    srcList = ipArg
+    if srcList == null or srcList == "" then srcList = globals.pipeResult
+
+    if srcList != "" and srcList != null then
+        ipList = srcList.split(",")
         globals.pipeResult = ""
-        print(c.orange + "Checking " + ipList.len + " IP(s) for port " + port + "..." + c.ennd)
+        print(c.orange + "Checking " + ipList.len + " IP(s) for " + needLabel + " port(s) " + portLabel + "..." + c.ennd)
         results = []
         for ip in ipList
-            ns = metaxploit.net_use(ip, portInt)
-            if ns then
+            if ip == "" then continue
+            openPorts = []
+            for pi in ports
+                ns = metaxploit.net_use(ip, pi)
+                if ns then
+                    openPorts.push("" + pi)
+                    print(c.lime + "  [+] " + ip + ":" + pi + " open" + c.ennd)
+                end if
+            end for
+            matched = openPorts.len > 0
+            if requireAll then matched = (openPorts.len == ports.len)
+            if matched then
                 results.push(ip)
-                print(c.lime + "  [+] " + ip + ":" + port + " open" + c.ennd)
+                if ports.len > 1 then print(c.green + "  [*] " + ip + " — " + openPorts.join(", ") + c.ennd)
             end if
         end for
         if results.len == 0 then
-            print(c.yellow + "<b>ipenum: no IPs found with port " + port + " open" + c.ennd)
+            print(c.yellow + "<b>ipenum: no IPs found with " + needLabel + " port(s) " + portLabel + c.ennd)
             globals.pipeFailed = true
             return
         end if
         joined = results.join(",")
         globals.pipeResult = joined
-        print(c.cyan + "  " + results.len + " / " + ipList.len + " IP(s) have port " + port + c.ennd)
+        print(c.cyan + "  " + results.len + " / " + ipList.len + " IP(s) have " + needLabel + " port(s) " + portLabel + c.ennd)
         if storeVar != null and storeVar != "" then
             gco2 = get_custom_object
             if not gco2.hasIndex("clips") then gco2.clips = {}
@@ -1004,7 +1076,7 @@ IpEnum = function(port, storeVar)
     end if
 
     rcomp = object.host_computer
-    print(c.orange + "Scanning LAN for port " + port + "..." + c.ennd)
+    print(c.orange + "Scanning LAN for " + needLabel + " port(s) " + portLabel + "..." + c.ennd)
 
     q = char(34)
     n = char(10)
@@ -1048,10 +1120,20 @@ IpEnum = function(port, storeVar)
     src = src + "router = get_router" + n
     src = src + "if not router then exit()" + n
     src = src + "getDevices(router)" + n
+    // multi-port: emit the whole port list and count how many are open on
+    // each device, so -all can demand every one of them on the same ip
+    // rather than just any single hit
+    matchTest = "> 0"
+    if requireAll then matchTest = "== " + ports.len
+    src = src + "ports = [" + ports.join(",") + "]" + n
     src = src + "results = []" + n
     src = src + "for ip in deviceList" + n
-    src = src + "  ns = metaxploit.net_use(ip, " + portInt + ")" + n
-    src = src + "  if ns then results.push(ip)" + n
+    src = src + "  opens = 0" + n
+    src = src + "  for p in ports" + n
+    src = src + "    ns = metaxploit.net_use(ip, p)" + n
+    src = src + "    if ns then opens = opens + 1" + n
+    src = src + "  end for" + n
+    src = src + "  if opens " + matchTest + " then results.push(ip)" + n
     src = src + "end for" + n
     src = src + "gco.ipenumResults = results.join(" + q + "," + q + ")" + n
     src = src + "gco.ipenumCount = results.len" + n
@@ -1080,13 +1162,13 @@ IpEnum = function(port, storeVar)
     if mxf then mxf.delete
 
     if not gco.ipenumResults or gco.ipenumCount == 0 then
-        print(c.yellow + "<b>ipenum: no IPs found with port " + port + " open" + c.ennd)
+        print(c.yellow + "<b>ipenum: no IPs found with " + needLabel + " port(s) " + portLabel + " open" + c.ennd)
         globals.pipeFailed = true
         return
     end if
 
     results = gco.ipenumResults.split(",")
-    print(c.cyan + "  " + results.len + " IP(s) with port " + port + " open:" + c.ennd)
+    print(c.cyan + "  " + results.len + " IP(s) with " + needLabel + " port(s) " + portLabel + " open:" + c.ennd)
     for ip in results
         print(c.white + "  " + ip + c.ennd)
     end for
@@ -1534,7 +1616,7 @@ end function
 // reads vuln results back via gco. Lets metaxploit.net_use run from
 // inside the target network so cross-subnet LAN IPs are reachable.
 ScanLanBounce = function(lanIp, port, libName, useLocal=false)
-    slbBin = currentPath + "/slb"
+    slbBin = "/root/ai/tp/slb"
     if not myComp.File(slbBin) then
         print(c.yellow + "<b>scan: slb binary not found at " + slbBin + c.ennd)
         print(c.grey + "  build it first: build /root/ai/tp/slb.src /root/ai/tp" + c.ennd)
@@ -1566,6 +1648,22 @@ ScanLanBounce = function(lanIp, port, libName, useLocal=false)
         end if
 
         bf = rcomp.File("/home/guest/slb")
+        // The "upload once per host" optimization above means a leftover
+        // slb from an earlier session gets reused forever. So after
+        // rebuilding slb.src locally (e.g. the version that honors
+        // gco.edb/deadLibs), every host that already had the OLD binary
+        // kept running it — and the old one ignores the exploit db and
+        // does a blind full scan instead. Compare the local and remote
+        // sizes and replace on mismatch: still no re-upload when they're
+        // identical, but a rebuilt scanner actually propagates.
+        if bf then
+            localSlb = myComp.File(slbBin)
+            if localSlb and localSlb.size != bf.size then
+                print(c.grey + "  stale scanner on target — replacing..." + c.ennd)
+                bf.delete
+                bf = null
+            end if
+        end if
         if not bf then
             print(c.grey + "  uploading scanner..." + c.ennd)
             uploadResult = myShell.scp(slbBin, "/home/guest", object)
@@ -3197,29 +3295,41 @@ ArLocal = function(userArg)
     user = "root"
     if userArg then user = userArg
     print(c.orange + "Cracking local " + user + " password (ChainSaw)..." + c.ennd)
-    ChainSaw.ip = ""
-    ChainSaw.user = user
+    // clean ChainSaw state so a prior (esp. remote) run can't leak in and
+    // skew the local crack — same reset the fixed "chainsaw run" does
+    ChainSaw.ip       = ""
+    ChainSaw.port     = 22
+    ChainSaw.user     = user
+    ChainSaw.password = ""
+    ChainSaw.shell    = null
+    ChainSaw.attempts = 0
+    ChainSaw.testing  = false
     ChainSaw.init
     result = ChainSaw.crack(true)
-    if result then
-        globals.lObject = result
-        // also leave it in gco for another phantom instance to pick up
-        // via "claim" — e.g. jump to a target, autoroot -l yourself
-        // there, then run claim from your original session to have
-        // that root shell land in globals.object back home. gco is a
-        // persistent, player-scoped store (same reason slb.src/wsx.src
-        // already hand live shell/computer objects back across a
-        // launch boundary between two different machines), so this
-        // works the same way across two independent phantom sessions.
-        gco.claimShell = result
-        print(c.lime + "<b>local " + user + " shell acquired!" + c.ennd)
-        print(c.gold + "  password: " + ChainSaw.password + c.ennd)
-        print(c.grey + "  left for pickup — run 'claim' from another phantom session to grab it" + c.ennd)
-        globals.pipeFailed = false
-    else
+    if not result then
         print(c.yellow + "<b>ar -l: failed to crack local " + user + " password" + c.ennd)
         globals.pipeFailed = true
+        return
     end if
+    if typeof(result) != "shell" then
+        print(c.yellow + "<b>ar -l: crack returned a non-shell (" + typeof(result) + ")" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    // get_shell(user, pw) signs in AS that user; stage it for cross-session
+    // claim and confirm root before trusting it
+    globals.lObject = result
+    gco.claimShell  = result
+    print(c.lime + "<b>local " + user + " shell acquired!" + c.ennd)
+    print(c.gold + "  password: " + ChainSaw.password + c.ennd)
+    if IsRoot(result) then
+        print(c.lime + "  [root] verified" + c.ennd)
+    else
+        print(c.yellow + "  [!] shell is NOT root (" + user + " is unprivileged on this host)" + c.ennd)
+    end if
+    print(c.grey + "  left for pickup — run 'claim' (or 'claim -shell') from another session" + c.ennd)
+    globals.pipeFailed = false
+	if globals.pipeFailed == true then ar()
 end function
 
 // -- AutoRoot -----------------------------------------------------
@@ -3331,6 +3441,19 @@ ar = function(ip, user, pass)
         gco.rootShell = null
         print(char(10) + c.purple + "<b>autoroot: root shell obtained" + c.ennd)
         GETPERMS(globals.object)
+        // keep objectStack in sync — if this machine was pushed earlier
+        // (grab | push before autoroot), replace the stale guest entry
+        // with the new root object so `stack` shows root, not guest
+        newComp = globals.object.host_computer
+        si = 0
+        for ent in objectStack
+            ecomp = ent
+            if typeof(ent) == "shell" then ecomp = ent.host_computer
+            if typeof(ecomp) == "computer" and ecomp.public_ip == newComp.public_ip and ecomp.local_ip == newComp.local_ip then
+                objectStack[si] = globals.object
+            end if
+            si = si + 1
+        end for
     else
         globals.pipeFailed = true
         print(c.yellow + "<b>autoroot: failed" + c.ennd)
