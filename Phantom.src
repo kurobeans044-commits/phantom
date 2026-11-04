@@ -105,53 +105,11 @@ globals.edb = []
 		return
 end if
 end if
-if dbFile and typeof(dbFile) == "file" then
-    content = dbFile.get_content
-    if content and content != "" then
-        for line in content.split(char(10))
-            if line == "" then continue
-            line = line.replace(char(13), "")
-            if line == "" then continue
-            p1 = line.indexOf("|")
-            if p1 == null then continue
-            p2 = line.indexOf("|", p1 + 1)
-            if p2 == null then continue
-            p3 = line.indexOf("|", p2 + 1)
-            entry = {}
-            if p3 != null then
-                p4 = line.indexOf("|", p3 + 1)
-                entry["lib"] = line[:p1]
-                entry["ver"] = line[p1+1:p2]
-                entry["mem"] = line[p2+1:p3]
-                if p4 != null then
-                    p5 = line.indexOf("|", p4 + 1)
-                    if p5 != null then
-                        entry["val"] = line[p3+1:p4]
-                        entry["type"] = line[p4+1:p5]
-                        entry["user"] = line[p5+1:]
-                    else
-                        entry["val"] = line[p3+1:p4]
-                        entry["type"] = line[p4+1:]
-                        entry["user"] = ""
-                    end if
-                else
-                    entry["val"] = line[p3+1:]
-                    entry["type"] = ""
-                    entry["user"] = ""
-                end if
-            else
-                entry["lib"] = line[:p1]
-                entry["ver"] = ""
-                entry["mem"] = line[p1+1:p2]
-                entry["val"] = line[p2+1:]
-                entry["type"] = ""
-                entry["user"] = ""
-            end if
-            if entry["lib"] == "" or entry["mem"] == "" or entry["val"] == "" then continue
-            globals.edb.push(entry)
-        end for
-        print(c.grey + "edb: loaded " + globals.edb.len + " exploit(s) from db.txt" + c.ennd)
-    end if
+// EdbLoadAll (hack.src) reads legacy db.txt + every per-lib file in db/
+globals.edb = []
+edbLoadedN = EdbLoadAll(myComp, currentPath)
+if edbLoadedN > 0 then
+    print(c.grey + "edb: loaded " + edbLoadedN + " exploit(s) (db/ + db.txt)" + c.ennd)
 end if
 
 // auto-load dead-lib list if it exists (libs previously scanned with
@@ -456,12 +414,30 @@ while true
                 else
                     print(c.yellow + "<b>@o: key not found: " + key + c.ennd)
                 end if
+            else if tokens[i] == "@lan" then
+                // held object's LAN ip — same as the main-loop handler, so
+                // `cmd | uselib -l @lan` resolves just like `|>` does
+                lanIp = ""
+                if typeof(object) == "shell" then lanIp = object.host_computer.local_ip
+                if typeof(object) == "computer" then lanIp = object.local_ip
+                if lanIp == "" then
+                    print(c.yellow + "<b>@lan: not holding a remote shell/computer" + c.ennd)
+                else
+                    tokens[i] = lanIp
+                end if
             else if tokens[i].len > 1 and tokens[i][0:1] == "@" then
                 tok = tokens[i][1:]
                 dotLen = tok.indexOf(".len")
                 if dotLen != null and dotLen == tok.len - 4 then
                     vn = tok[0:dotLen]
                     val = ""
+                    gcoOL = get_custom_object
+                    if gcoOL.hasIndex("objClips") and gcoOL.objClips.hasIndex(vn) then
+                        // object-list clip ("stack | clip @t") - count objects
+                        tokens[i] = "" + gcoOL.objClips[vn].len
+                        i = i + 1
+                        continue
+                    end if
                     if pipeVars.hasIndex(vn) then val = pipeVars[vn]
                     if val.indexOf(",") != null then
                         tokens[i] = "" + val.split(",").len
@@ -580,6 +556,10 @@ while true
 
         inp = user_input(c.cyan + "<b>" + active_user + c.ennd + c.grey + "@" + c.ennd + c.gold + myPath + c.ennd + c.white + " $ </b>" + c.ennd, false, false, true).split(" ")
         pipeFailed = false
+        // clear any leftover object-pipe result (e.g. a standalone `stack`
+        // at the end of a macro) so the next `clip <name>` captures this
+        // line's string result, not a stale object list
+        globals.pipeObjResult = null
     end if
 
     // ── if conditional preprocessing ──────────────────────────────
@@ -666,6 +646,13 @@ while true
             if dotLen != null and dotLen == tok.len - 4 then
                 vn = tok[0:dotLen]
                 val = ""
+                gcoOL = get_custom_object
+                if gcoOL.hasIndex("objClips") and gcoOL.objClips.hasIndex(vn) then
+                    // object-list clip ("stack | clip @t") - count objects
+                    inp[i] = "" + gcoOL.objClips[vn].len
+                    i = i + 1
+                    continue
+                end if
                 if pipeVars.hasIndex(vn) then val = pipeVars[vn]
                 if val.indexOf(",") != null then
                     inp[i] = "" + val.split(",").len
@@ -781,7 +768,7 @@ while true
         gcoD = get_custom_object
         if gcoD.hasIndex("macroFuncs") and gcoD.macroFuncs.hasIndex(cmd) then
             fn = gcoD.macroFuncs[cmd]
-            compiled = CompileMacroLines(fn["rawLines"], inp[1:], false)
+            compiled = CompileMacroLines(fn["rawLines"], FuncArgs(inp[1:]), false)
             globals.macroQueue = compiled + ["__funcend__"] + globals.macroQueue
             if macroName == "" then globals.macroName = cmd
         else
