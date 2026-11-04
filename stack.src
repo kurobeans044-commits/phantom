@@ -14,10 +14,67 @@ CmdPush = function(inp)
         if typeof(object) == "shell" then
             print(c.grey + "  " + object.host_computer.public_ip + "  " + object.host_computer.local_ip + c.ennd)
         end if
+        // tee the pushed object to a following `clip <name>` so
+        // `grab | push | clip d` names it as a 1-object clip. Only when
+        // actually mid-pipe (a next stage is queued) — a standalone push
+        // must NOT leave a dangling object-result for an unrelated later
+        // clip to grab (same guard CmdStack uses).
+        if globals.pipeQueue != null and globals.pipeQueue.len > 0 then
+            globals.pipeObjResult = [object]
+        end if
     end if
 end function
 CommandTable["push"] = @CmdPush
 
+Rename = function(inp)
+if object == null then
+	return print(c.copper + "[i] no remote object being held")
+end if
+if typeof(object) != "shell" then
+		return print(c.copper + "[!] no remote shell being held")
+end if
+
+if inp.len < 3 then
+	return print(c.rust + "[!] usage rname [file] [newname]")
+end if
+
+
+rcomp = object.host_computer
+rfile = rcomp.File(inp[1])
+if not rfile then
+	return print(c.rust + "[!] unable to find ==> " + inp[1])
+end if
+result = rfile.rename(inp[2])
+if typeof(result) == "string" and result != "" then
+	return print(c.copper + "[!] Unable to Rename " + inp[1] + " ==> " + str(result))
+		
+	end if
+	print(c.lime + "[+] " + inp[1] + " renamed to" + c.rust + " ==> " + c.lime + inp[2])
+end function
+CommandTable["rname"] = @Rename
+
+rread = function(inp)
+if object == null then
+	return print(c.copper + "[i] no remote object being held")
+end if
+if typeof(object) != "shell" or typeof(object) == "computer" then
+		return print(c.copper + "[!] no remote object being held")
+end if
+
+if inp.len < 2 then
+	return print(c.rust + "[!] usage rread [file] [newname]")
+end if
+rcomp = object.host_computer
+target = rcomp.File(inp[1])
+if not target then
+	return print(r.rust + "[!] unable to read ==> " + inp[1])
+end if
+result = target.get_content
+	
+	print(char(10) + c.lime + "[+] content " + c.rust + "==> " + c.lime + result)
+
+end function
+CommandTable["read"] = @rread
 // ── pop ──────────────────────────────────────────────────────────
 CmdPop = function(inp)
     if objectStack.len == 0 then
@@ -71,8 +128,16 @@ CmdStack = function(inp)
         end for
         // lets "stack | clip @b" capture the current stack as a named,
         // reusable object-list — clip checks this before its normal
-        // string-pipeResult path (see CmdClip, vars.src)
-        globals.pipeObjResult = objectStack[:]
+        // string-pipeResult path (see CmdClip, vars.src). ONLY when stack
+        // is actually piping into a next command: when CmdStack runs mid-
+        // pipe the next stage is already queued, so pipeQueue is non-empty.
+        // A standalone `stack` (end of a macro, etc.) must NOT leave a
+        // dangling object-result, or the next unrelated `clip <name>` grabs
+        // it instead of that line's real string output (the "@s = 1 object"
+        // bug).
+        if globals.pipeQueue != null and globals.pipeQueue.len > 0 then
+            globals.pipeObjResult = objectStack[:]
+        end if
     end if
 end function
 CommandTable["stack"] = @CmdStack
@@ -156,27 +221,31 @@ CmdStackrun = function(inp)
             label = sComp.public_ip + "/" + sComp.local_ip
             print(c.cyan + "<b>[" + i + "] " + label + c.ennd)
 
-            if sub == "plant" then
-                srcDir = "/root/InsecureLibs"
-                libName = "libhttp.so"
-                dest = "/home/guest"
-                if inp.len >= 3 then libName = inp[2]
-                if inp.len >= 4 then dest = inp[3]
-                srcPath = srcDir + "/" + libName
-                if not myComp.File(srcPath) then
-                    print(c.yellow + "  plant: " + srcPath + " not found — aborting" + c.ennd)
-                    break
-                end if
-                if typeof(obj) != "shell" then
-                    print(c.grey + "  (computer object - plant needs a shell; skipped)" + c.ennd)
-                else
-                    result = myShell.scp(srcPath, dest, obj)
-                    if result then
-                        print(c.yellow + "  plant failed: " + result + c.ennd)
-                    else
-                        print(c.lime + "  [+] planted " + libName + " at " + dest + "/" + libName + c.ennd)
-                    end if
-                end if
+if sub == "plant" then
+    srcDir = "/root/InsecureLibs"
+    libNames = ["libhttp.so", "net.so"]
+    dest = "/lib"
+    if inp.len >= 3 then libNames = inp[2].split(",")
+    if inp.len >= 4 then dest = inp[3]
+    if typeof(obj) != "shell" then
+        print(c.grey + "  (computer object - plant needs a shell; skipped)" + c.ennd)
+    else
+        for libName in libNames
+            srcPath = srcDir + "/" + libName
+            if not myComp.File(srcPath) then
+                print(c.yellow + "  plant: " + srcPath + " not found - skipped" + c.ennd)
+                continue
+            end if
+            result = myShell.scp(srcPath, dest, obj)
+			mxP = myShell.scp("/lib/metaxploit.so", dest, obj)
+            if result == 1 or result == true or result == null or result == "" then
+                print(c.lime + "  [+] planted " + libName + " at " + dest + "/" + libName + c.ennd)
+				print(c.lime + "  [+] planted " + mxP + " metaxploit.so" + " at " + dest + "/" + "metaxploit.so" + c.ennd)
+            else
+                print(c.yellow + "  plant " + libName + " failed: " + str(result) + c.ennd)
+            end if
+        end for
+    end if
 
             else if sub == "cmd" or sub == "launch" then
                 if inp.len < 3 then
@@ -209,7 +278,8 @@ CmdStackrun = function(inp)
                     else
                         content = f.get_content
                         if content and content != "" then
-                            print(c.white + content + c.ennd)
+                            print(char(10) + char(9) + c.green + "[i] " + f.path + c.copper + " ==> " + c.ennd + c.white + content + c.ennd)
+							print(" ")
                         else
                             print(c.grey + "  (empty)" + c.ennd)
                         end if
@@ -233,8 +303,9 @@ CmdStackrun = function(inp)
                         print(c.yellow + "  could not create " + inp[2] + c.ennd)
                     else
                         res = f.set_content(inp[3:].join(" "))
-                        if res == null or res == "" then
-                            print(c.lime + "  wrote " + inp[2] + c.ennd)
+                        if res != null or res != "" then
+                            print(char(10) + c.lime + "  wrote " + c.copper + " ==> " + c.lime + inp[2] + c.ennd)
+							print(" ")
                         else
                             print(c.yellow + "  write failed: " + res + c.ennd)
                         end if
@@ -269,12 +340,13 @@ CmdStackrun = function(inp)
                     print(c.yellow + "  usage: mv <src> <destFolder>" + c.ennd)
                 else
                     f = sComp.File(inp[2])
+					
                     if not f then
                         print(c.grey + "  not found: " + inp[2] + c.ennd)
                     else
-                        res = f.move(inp[3])
+                        res = f.move(inp[3], f.name)
                         if res == 1 or res == "" or res == null then
-                            print(c.lime + "  moved " + inp[2] + " -> " + inp[3] + c.ennd)
+                            print(c.lime + "  moved " + inp[2] + c.copper + " ==> " + c.ennd + c.lime + inp[3] + c.ennd)
                         else
                             print(c.yellow + "  mv failed: " + str(res) + c.ennd)
                         end if
@@ -289,9 +361,9 @@ CmdStackrun = function(inp)
                     if not f then
                         print(c.grey + "  not found: " + inp[2] + c.ennd)
                     else
-                        res = f.copy(inp[3])
+                        res = f.copy(inp[3], f.name)
                         if res == 1 or res == "" or res == null then
-                            print(c.lime + "  copied " + inp[2] + " -> " + inp[3] + c.ennd)
+                            print(c.lime + "  copied " + inp[2] +  c.copper + " ==> " + c.ennd + inp[3] + c.ennd)
                         else
                             print(c.yellow + "  cp failed: " + str(res) + c.ennd)
                         end if
@@ -381,9 +453,13 @@ CmdStackrun = function(inp)
                         names.push(fl.name)
                     end for
                     if names.len > 0 then
-                        print(c.white + "  " + names.join("  ") + c.ennd)
+						for name in names
+                        print(c.white + "  " + name + c.ennd)
+					end for
                     else
                         print(c.grey + "  (empty)" + c.ennd)
+					
+					
                     end if
                 end if
 
@@ -449,7 +525,7 @@ CmdStackrun = function(inp)
                 end if
 
             else if sub == "procs" then
-                if typeof(obj) == "shell" then
+                if typeof(obj) == "shell" or typeof(obj) == "computer" then
                     plist = sComp.show_procs
                     if plist and plist != "" then
                         print(c.white + plist + c.ennd)
@@ -947,6 +1023,20 @@ CommandTable["treegrep"] = @CmdTreegrep
 // ================================================================
 
 // ── clip ─────────────────────────────────────────────────────────
+// a clip name holds ONE kind of value — a string list OR an object
+// list, never both. These keep the two stores in sync so reusing a
+// name (e.g. "stack | clip @a" then later "randip | clip @a") doesn't
+// leave a stale entry of the other kind that for/foreach would pick up.
+ClipDropObj = function(k)
+    gcoCD = get_custom_object
+    if gcoCD.hasIndex("objClips") and gcoCD.objClips.hasIndex(k) then gcoCD.objClips.remove(k)
+end function
+ClipDropStr = function(k)
+    gcoCD = get_custom_object
+    if gcoCD.hasIndex("clips") and gcoCD.clips.hasIndex(k) then gcoCD.clips.remove(k)
+    if pipeVars.hasIndex(k) then pipeVars.remove(k)
+end function
+
 CmdClip = function(inp)
     gco = get_custom_object
     if not gco.hasIndex("clips") then gco.clips = {}
@@ -966,6 +1056,8 @@ CmdClip = function(inp)
                 for k in pipeVars.indexes
                     pipeVars.remove(k)
                 end for
+                gcoCc = get_custom_object
+                if gcoCc.hasIndex("objClips") then gcoCc.objClips = {}
                 print(c.grey + "  cleared " + count + " clip(s)" + c.ennd)
             else
                 print(c.yellow + "<b>clip -d: missing name (e.g. clip -d @a)" + c.ennd)
@@ -973,9 +1065,12 @@ CmdClip = function(inp)
         else
             k = inp[2]
             if k[0:1] == "@" then k = k[1:]
-            if gco.clips.hasIndex(k) then
-                gco.clips.remove(k)
+            gcoDd = get_custom_object
+            hadObj = gcoDd.hasIndex("objClips") and gcoDd.objClips.hasIndex(k)
+            if gco.clips.hasIndex(k) or hadObj then
+                if gco.clips.hasIndex(k) then gco.clips.remove(k)
                 if pipeVars.hasIndex(k) then pipeVars.remove(k)
+                if hadObj then gcoDd.objClips.remove(k)
                 print(c.grey + "  cleared @" + k + c.ennd)
             else
                 print(c.yellow + "  @" + k + " not found" + c.ennd)
@@ -1001,6 +1096,7 @@ CmdClip = function(inp)
             if not gcoO.hasIndex("objClips") then gcoO.objClips = {}
             gcoO.objClips[k] = globals.pipeObjResult
             globals.pipeObjResult = null
+            ClipDropStr(k)
             print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gcoO.objClips[k].len + " object(s)" + c.ennd)
             return
         end if
@@ -1022,12 +1118,14 @@ CmdClip = function(inp)
             gco.clips[k] = val
             pipeVars[k] = val
             globals.pipeResult = val
+            ClipDropObj(k)
             print(c.lime + "  @" + k + " += " + val + c.ennd)
         else if inp.len < 3 then
             if pipeResult != "" then
                 val = pipeResult
                 gco.clips[k] = val
                 pipeVars[k] = val
+                ClipDropObj(k)
                 // leave pipeResult as-is (don't clear it) — lets clip act as
                 // a tee, e.g. "harvest | clip @a | write file" both saves the
                 // named clip AND still hands the same result on to write
@@ -1045,6 +1143,7 @@ CmdClip = function(inp)
             end if
             gco.clips[k] = val
             pipeVars[k] = val
+            ClipDropObj(k)
             print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + val + c.ennd)
         end if
     end if
