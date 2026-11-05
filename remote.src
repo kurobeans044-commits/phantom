@@ -970,7 +970,7 @@ NetMap = function(localMode=false)
         return
     end if
 
-    nmBin = currentPath + "/netmap"
+    nmBin = globals.dbPath + "/netmap"
     if not myComp.File(nmBin) then
         print(c.yellow + "<b>netmap: netmap binary not found at " + nmBin + c.ennd)
         print(c.grey + "  build it first: build /root/ai/tp/netmap.src /root/ai/tp" + c.ennd)
@@ -982,6 +982,11 @@ NetMap = function(localMode=false)
 
     print(c.orange + "Uploading netmap..." + c.ennd)
     uploadResult = myShell.scp(nmBin, "/home/guest", object)
+	if uploadResult == null or uploadResult == "" then
+		return uploadResult
+	end if
+	
+		
     if typeof(uploadResult) == "string" and uploadResult != "" then
         print(c.yellow + "<b>netmap: upload failed: " + uploadResult + c.ennd)
         return
@@ -1866,6 +1871,3 @@ clear_screen
 Title()
 end function
 CommandTable["c"] = @z
-
-
-
