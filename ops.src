@@ -1616,10 +1616,10 @@ end function
 // reads vuln results back via gco. Lets metaxploit.net_use run from
 // inside the target network so cross-subnet LAN IPs are reachable.
 ScanLanBounce = function(lanIp, port, libName, useLocal=false)
-    slbBin = "/root/ai/tp/slb"
+    slbBin = globals.dbPath + "/slb"
     if not myComp.File(slbBin) then
         print(c.yellow + "<b>scan: slb binary not found at " + slbBin + c.ennd)
-        print(c.grey + "  build it first: build /root/ai/tp/slb.src /root/ai/tp" + c.ennd)
+        print(c.grey + "  build it first: build " + globals.dbPath + "/slb.src " + globals.dbPath + c.ennd)
         globals.pipeFailed = true
         return
     end if
@@ -1627,7 +1627,7 @@ ScanLanBounce = function(lanIp, port, libName, useLocal=false)
     if useLocal then
         // no upload/scp needed at all — if you jumped phantom itself
         // onto this machine, slb and metaxploit.so already sit right
-        // alongside it at currentPath, so it can just launch in place
+        // alongside it at globals.dbPath, so it can just launch in place
         rcomp = myComp
         print(c.orange + "Bouncing scan to " + lanIp + ":" + port + " locally..." + c.ennd)
         launchPath = slbBin
@@ -1720,7 +1720,7 @@ ScanLanBounce = function(lanIp, port, libName, useLocal=false)
 
     // slb.src can't write deadlibs.txt itself (it runs on the target,
     // not the origin machine) — it just flags the finding via gco and
-    // we persist it here, back on the origin, where currentPath is
+    // we persist it here, back on the origin, where globals.dbPath is
     // actually valid.
     if gco.slbDeadLib then DeadLibAdd(gco.slbLibName, gco.slbLibVer)
 
@@ -1920,10 +1920,10 @@ Scan = function(ip, port, comp, inject, libName)
         return
     end if
     // check db.txt for known exploits for this lib - skip scanning if found
-    dbFile = myComp.File(currentPath + "/db.txt")
+    dbFile = myComp.File(globals.dbPath + "/db.txt")
 	if not dbFile then
-		myComp.touch(currentPath, "db.txt")
-		dbFile = myComp.File(currentPath+ "/db.txt")
+		myComp.touch(globals.dbPath, "db.txt")
+		dbFile = myComp.File(globals.dbPath + "/db.txt")
 		else
 		if dbFile == null or not dbFile then
 		print(char(9) + char(10) + "<color=red><size=125%>Missing db.txt, make it in /root/ai/tp and then try again")
@@ -2075,7 +2075,7 @@ Scan = function(ip, port, comp, inject, libName)
     print(c.orange + "shells: " + shells + "  files: " + files + "  computers: " + comps + c.ennd)
 
     // suggest grab if matching version exploit in db
-    dbFile2 = myComp.File(currentPath + "/db.txt")
+    dbFile2 = myComp.File(globals.dbPath + "/db.txt")
     if dbFile2 and typeof(dbFile2) == "file" then
         dbContent2 = dbFile2.get_content
         if dbContent2 and dbContent2 != "" then
@@ -2161,7 +2161,7 @@ Grab = function(ip, port, mem, val, inject, acceptComputer)
             end if
             gco.scanLanResults.remove(scanKey)
         end if
-        dbFile = myComp.File(currentPath + "/db.txt")
+        dbFile = myComp.File(globals.dbPath + "/db.txt")
         if dbFile and typeof(dbFile) == "file" then
             dbContent = dbFile.get_content
             if dbContent and dbContent != "" then
@@ -3373,14 +3373,14 @@ ar = function(ip, user, pass)
     end if
 
     // upload ar binary
-    arBin = myComp.File(currentPath + "/ar")
+    arBin = myComp.File(globals.dbPath + "/ar")
     if not arBin then
-        print(c.yellow + "<b>autoroot: ar binary not found in " + currentPath + c.ennd)
-        print(c.grey + "  build ar.src locally: build ar.src " + currentPath + c.ennd)
+        print(c.yellow + "<b>autoroot: ar binary not found in " + globals.dbPath + c.ennd)
+        print(c.grey + "  build ar.src locally: build ar.src " + globals.dbPath + c.ennd)
         return
     end if
     print(c.orange + "Uploading ar to " + writePath + " ..." + c.ennd)
-    myShell.scp(currentPath + "/ar", writePath, object)
+    myShell.scp(globals.dbPath + "/ar", writePath, object)
     binFile = comp.File(writePath + "/ar")
     if not binFile then
         globals.pipeFailed = true
