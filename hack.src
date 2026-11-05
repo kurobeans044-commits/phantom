@@ -1193,9 +1193,9 @@ end function
 EdbSave = function()
     if globals.edb == null then return
     if globals.edb.len == 0 then return
-    savePath = globals.currentPath
+    savePath = globals.dbPath
     if not savePath or savePath == "" then
-        print(c.yellow + "edb: globals.currentPath not set — cannot save" + c.ennd)
+        print(c.yellow + "edb: globals.dbPath not set — cannot save" + c.ennd)
         return
     end if
     comp = get_shell.host_computer
@@ -1285,7 +1285,7 @@ DeadLibSave = function()
     for d in globals.deadLibs
         out = out + d["lib"] + "|" + d["ver"] + char(10)
     end for
-    savePath = globals.currentPath
+    savePath = globals.dbPath
     if not savePath or savePath == "" then return
     comp = get_shell.host_computer
     f = comp.File(savePath + "/deadlibs.txt")
@@ -1380,7 +1380,7 @@ FlushEdb = function()
 end function
 ExploitDB = function(args)
     if globals.edb == null then globals.edb = []
-    dbPath = globals.currentPath + "/db.txt"
+    dbPath = globals.dbPath + "/db.txt"
     comp = get_shell.host_computer
     cmd = ""
     if args.len > 0 then cmd = args[0]
@@ -1454,7 +1454,7 @@ ExploitDB = function(args)
     // edb load — read from disk (db/ split files + legacy db.txt)
     if cmd == "load" then
         globals.edb = []
-        loaded = EdbLoadAll(comp, globals.currentPath)
+        loaded = EdbLoadAll(comp, globals.dbPath)
         print(c.green + "edb: loaded " + loaded + " entries (db/ + db.txt)" + c.ennd)
         return
     end if
