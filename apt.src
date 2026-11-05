@@ -1,0 +1,63 @@
+aptAdd = function(inp)
+if inp.len < 2 then 
+	return print(c.rust + "[+] Useage => apt-add [repo]")
+end if
+apt = include_lib("/lib/aptclient.so")
+result = apt.add_repo(inp[1])
+if result then
+	print(c.lime + "[+] Repo Succesfully Added")
+	else
+	print("[!] Unable to Add Repo :(")
+end if
+end function
+CommandTable["apt-add"] = @aptAdd
+
+//apt install
+aptInstall = function(inp)
+if inp.len < 2  then 
+	return print(c.rust + "[+] Useage => apt-install [name] [opt: path]")
+end if
+Path = ""
+if Path != "" and Path != null then
+	Path = inp[2]
+end if
+
+apt = include_lib("/lib/aptclient.so")
+result = apt.install(inp[1], Path)
+if result then
+	print(c.lime + "[+] Repo Succesfully Installed")
+	else
+	print("[!] Unable to Install :(")
+end if
+end function
+CommandTable["apt-install"] = @aptInstall
+
+//apt update
+
+aptUpdate = function(inp)
+apt = include_lib("/lib/aptclient.so")
+result = apt.update
+if result == "" then
+	print(c.lime + "[+] " + " Succesfully Updated")
+	else
+	print(c.red + "[!] Unable to update" + " :(")
+end if
+end function
+CommandTable["apt-update"] = @aptUpdate
+
+//apt del-repo
+
+aptDel = function(inp)
+if inp.len < 2  then 
+	return print(c.rust + "[+] Useage => apt-del [ip]")
+end if
+
+apt = include_lib("/lib/aptclient.so")
+result = apt.del_repo(inp[1])
+if result then
+	print(c.lime + "[+] Repo Succesfully Removed")
+	else
+	print("[!] Unable to Remove :(")
+end if
+end function
+CommandTable["apt-del"] = @aptDel
